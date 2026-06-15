@@ -157,6 +157,11 @@ def _fmt_interval(low, high, digits: int = 1) -> str:
     return f"{lo:.{digits}f} to {hi:.{digits}f}"
 
 
+def _fmt_int(v) -> str:
+    value = _num(v)
+    return "—" if pd.isna(value) else f"{int(value):,}"
+
+
 def reason_chips(labels: list[str]) -> None:
     if not labels:
         st.caption("No reason codes recorded.")
@@ -343,7 +348,7 @@ def active_district_detail(row: pd.Series, specialty: str) -> None:
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Active score", _fmt(row.get("active_uncertainty_score")))
     m2.metric("Aggregate CI width", _fmt(row.get("aggregate_ci_width")))
-    m3.metric("Observed rows", str(int(_num(row.get("observed_facility_rows"), 0))))
+    m3.metric("Observed rows", _fmt_int(row.get("observed_facility_rows")))
     m4.metric("Sample uncertainty", _fmt(row.get("sample_size_uncertainty_score")))
 
     display = pd.DataFrame(

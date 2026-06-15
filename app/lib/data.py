@@ -414,10 +414,10 @@ GEO_VALIDATION_STEPS = pd.DataFrame([
         "Decision": "Compare neighborhoods, not exact points, when geocoder precision is fuzzy",
     },
     {
-        "Step": "5. Review queue",
+        "Step": "5. Uncertainty queue",
         "Tool": "Uncertainty tab + persisted Delta outcomes",
         "Output": "keep, corrected_geo, approximate_review, not_found, provider_conflict",
-        "Decision": "Manual review only for ambiguous API outcomes",
+        "Decision": "Keep ambiguous API outcomes visible as unresolved uncertainty",
     },
 ])
 
@@ -978,7 +978,7 @@ def messiness_breakdown(facilities: pd.DataFrame, districts: pd.DataFrame) -> pd
             "Impact": "Treat facility fields as claims until externally corroborated",
         },
         {
-            "Failure mode": "Manual review burden",
+            "Failure mode": "Uncertainty review burden",
             "Observed signal": f"{q['needs_human_review']:,} rows ({q['needs_human_review']/total:.0%})",
             "Impact": "The product must route records to verification, not hide uncertainty",
         },
@@ -1233,7 +1233,7 @@ def verification_queue(
     focus: str,
     top_n: int = 75,
 ) -> pd.DataFrame:
-    """Build a prioritized facility queue for external/human verification."""
+    """Build a prioritized facility queue for source enrichment and uncertainty review."""
     d = filter_facilities(facilities, specialty, include_geo_flagged=True).copy()
     if d.empty:
         return pd.DataFrame()
@@ -1263,7 +1263,7 @@ def verification_queue(
     elif focus == "Contradictions and geo failures":
         d = d[d["label_seed"].eq("contradicted_seed")]
         d = d.sort_values("review_priority", ascending=False)
-    elif focus == "Manual review queue":
+    elif focus in {"Manual review queue", "Uncertainty review queue"}:
         d = d[d["needs_human_review"]]
         d = d.sort_values("review_priority", ascending=False)
     else:
