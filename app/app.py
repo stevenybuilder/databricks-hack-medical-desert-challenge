@@ -184,6 +184,14 @@ def uncertainty_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty
         width="stretch",
         height=250,
     )
+    st.markdown('<div class="mdn-panel-h">How the app explains uncertainty</div>',
+                unsafe_allow_html=True)
+    st.dataframe(
+        data.explainability_model_card(),
+        hide_index=True,
+        width="stretch",
+        height=245,
+    )
 
     seed_summary, seed_breakdown, seed_report = data.golden_seed_report()
     if not seed_summary.empty:
@@ -237,6 +245,101 @@ def uncertainty_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty
             )
         st.caption("Upgrade path: " + policy.get("upgrade_path", ""))
 
+    district_queue = data.active_district_queue()
+    facility_queue = data.active_facility_queue()
+    if not district_queue.empty or not facility_queue.empty:
+        st.markdown('<div class="mdn-panel-h">Active uncertainty explanations</div>',
+                    unsafe_allow_html=True)
+        st.caption(
+            "These queues are active-learning inspired without human-oracle labels. "
+            "They rank where source enrichment or cautious UI treatment would most reduce decision risk."
+        )
+        q_tabs = st.tabs(["District drivers", "Facility drivers"])
+        with q_tabs[0]:
+            if district_queue.empty:
+                st.info("No active district queue artifact found.")
+            else:
+                dq = district_queue.rename(columns={
+                    "active_uncertainty_rank": "Rank",
+                    "active_uncertainty_score": "Score",
+                    "active_learning_action": "Action",
+                    "state_ut": "State",
+                    "district_name": "District",
+                    "planning_category": "Planning category",
+                    "observed_facility_rows": "Observed rows",
+                    "care_gap_score": "Care gap",
+                    "trust_gap_score": "Trust gap",
+                    "aggregate_ci_width": "CI width",
+                    "sample_size_uncertainty_score": "Sample uncertainty",
+                })
+                ev = st.dataframe(
+                    dq[[
+                        "Rank", "Score", "Action", "State", "District",
+                        "Planning category", "Observed rows", "Care gap",
+                        "Trust gap", "CI width", "Sample uncertainty",
+                    ]],
+                    hide_index=True,
+                    width="stretch",
+                    height=360,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    column_config={
+                        "Score": st.column_config.NumberColumn(format="%.3f"),
+                        "Care gap": st.column_config.NumberColumn(format="%.3f"),
+                        "Trust gap": st.column_config.NumberColumn(format="%.3f"),
+                        "CI width": st.column_config.NumberColumn(format="%.3f"),
+                        "Sample uncertainty": st.column_config.NumberColumn(format="%.3f"),
+                    },
+                )
+                sel = ev.selection.rows if ev and ev.selection else []
+                if sel:
+                    ui.active_district_detail(district_queue.iloc[sel[0]], specialty)
+                else:
+                    st.caption("Select a district row to see the scoring drivers and confidence intervals.")
+        with q_tabs[1]:
+            if facility_queue.empty:
+                st.info("No active facility queue artifact found.")
+            else:
+                fq = facility_queue.rename(columns={
+                    "active_uncertainty_rank": "Rank",
+                    "active_uncertainty_score": "Score",
+                    "active_learning_action": "Action",
+                    "external_validation_action": "External action",
+                    "facility_name": "Facility",
+                    "facilityTypeId": "Type",
+                    "state_ut": "State",
+                    "district_name": "District",
+                    "proxy_trust_interval_low": "Trust low",
+                    "proxy_trust_interval_high": "Trust high",
+                    "pre_geocode_uncertainty_band_high_km": "Geo band high km",
+                    "first_source_url": "Source",
+                })
+                show = [
+                    "Rank", "Score", "Action", "External action", "Facility",
+                    "Type", "State", "District", "Trust low", "Trust high",
+                    "Geo band high km", "Source",
+                ]
+                ev = st.dataframe(
+                    fq[[c for c in show if c in fq]],
+                    hide_index=True,
+                    width="stretch",
+                    height=360,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    column_config={
+                        "Score": st.column_config.NumberColumn(format="%.3f"),
+                        "Trust low": st.column_config.NumberColumn(format="%.3f"),
+                        "Trust high": st.column_config.NumberColumn(format="%.3f"),
+                        "Geo band high km": st.column_config.NumberColumn(format="%.1f"),
+                        "Source": st.column_config.LinkColumn("Source"),
+                    },
+                )
+                sel = ev.selection.rows if ev and ev.selection else []
+                if sel:
+                    ui.active_facility_detail(facility_queue.iloc[sel[0]])
+                else:
+                    st.caption("Select a facility row to see proxy trust bands, estimates, and source checks.")
+
     st.markdown('<div class="mdn-panel-h">External validation sources</div>',
                 unsafe_allow_html=True)
     st.dataframe(
@@ -276,7 +379,7 @@ def uncertainty_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty
     st.markdown('<div class="mdn-panel-h">Geo fix pipeline: LLM parser + map validator</div>',
                 unsafe_allow_html=True)
     st.caption("LLMs clean Indian address text; Google Maps/Mappls validate physical location. "
-               "No training labels are required, only review of ambiguous API outcomes.")
+               "No training labels are required; ambiguous API outcomes stay visible as uncertainty.")
     g1, g2 = st.columns([1.05, 1], gap="medium")
     with g1:
         st.dataframe(
@@ -291,6 +394,21 @@ def uncertainty_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty
             hide_index=True,
             width="stretch",
             height=260,
+        )
+    priors = data.geocoder_uncertainty_priors()
+    if not priors.empty:
+        st.markdown('<div class="mdn-panel-h">Geocoder uncertainty priors</div>',
+                    unsafe_allow_html=True)
+        st.dataframe(
+            priors,
+            hide_index=True,
+            width="stretch",
+            height=245,
+            column_config={
+                "proxy_confidence_low": st.column_config.NumberColumn(format="%.2f"),
+                "proxy_confidence_high": st.column_config.NumberColumn(format="%.2f"),
+                "planning_uncertainty_radius_km": st.column_config.NumberColumn(format="%.1f"),
+            },
         )
 
     geo_candidates = data.geo_validation_candidates(facilities, top_n=25)
@@ -309,21 +427,35 @@ def uncertainty_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty
             "address_stateOrRegion": "State",
             "address_zipOrPostcode": "PIN",
             "geocoder_query": "Geocoder query",
+            "external_validation_action": "External action",
+            "external_validation_priority_score": "External priority",
+            "pre_geocode_uncertainty_band_high_km": "Geo band high km",
+            "fuzzy_precheck_status": "Fuzzy precheck",
         })
-        st.dataframe(
-            geo_display[[
-                "Facility", "Type", "Reason", "Priority", "Current geo quality",
-                "PIN distance km", "Current coordinates", "City", "State", "PIN",
-                "Geocoder query",
-            ]],
+        geo_cols = [
+            "Facility", "Type", "Reason", "External action", "External priority",
+            "Priority", "Current geo quality", "PIN distance km", "Geo band high km",
+            "Fuzzy precheck", "City", "State", "PIN", "Geocoder query",
+        ]
+        geo_event = st.dataframe(
+            geo_display[[c for c in geo_cols if c in geo_display]],
             hide_index=True,
             width="stretch",
             height=300,
+            on_select="rerun",
+            selection_mode="single-row",
             column_config={
                 "Priority": st.column_config.NumberColumn(format="%.1f"),
+                "External priority": st.column_config.NumberColumn(format="%.3f"),
                 "PIN distance km": st.column_config.NumberColumn(format="%.1f"),
+                "Geo band high km": st.column_config.NumberColumn(format="%.1f"),
             },
         )
+        geo_sel = geo_event.selection.rows if geo_event and geo_event.selection else []
+        if geo_sel:
+            ui.geo_candidate_detail(geo_candidates.iloc[geo_sel[0]])
+        else:
+            st.caption("Select a geo candidate to see source-agreement rules and reason codes.")
 
     st.markdown('<div class="mdn-panel-h">Evidence review seed queue</div>',
                 unsafe_allow_html=True)
@@ -331,7 +463,7 @@ def uncertainty_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty
     with qc1:
         focus = st.selectbox(
             "Queue focus",
-            ["Highest-risk first", "Manual review queue", "Contradictions and geo failures",
+            ["Highest-risk first", "Uncertainty review queue", "Contradictions and geo failures",
              "Positive controls"],
         )
     with qc2:

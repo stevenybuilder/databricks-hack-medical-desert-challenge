@@ -24,3 +24,4 @@ output/data/google_geocoding_results*.csv
 output/data/google_geocoding_raw*.jsonl
 output/data/google_maps_geocoding_*.csv
 output/data/google_maps_geocoding_*.jsonl
+output/sql/google_geocoding_results*.sql
