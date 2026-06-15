@@ -7,3 +7,20 @@ venv/
 env/
 *.env
 *.env.*
+.env
+.env.*
+
+# Local credentials and cloud secrets
+*.pem
+*.key
+*credentials*.json
+*token*.json
+*service-account*.json
+.gcloud/
+secrets/
+
+# Google Maps/Geocoding API responses can include keys in URLs and public contact/address evidence.
+output/data/google_geocoding_results*.csv
+output/data/google_geocoding_raw*.jsonl
+output/data/google_maps_geocoding_*.csv
+output/data/google_maps_geocoding_*.jsonl

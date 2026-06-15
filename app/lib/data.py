@@ -574,6 +574,321 @@ def supervised_model_report() -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     return summary, pd.DataFrame(task_rows), report
 
 
+def _read_optional_csv(path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path, low_memory=False)
+
+
+def _coerce_known_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    numeric_fragments = [
+        "_score", "_rate", "_ci_low", "_ci_high", "_rows", "_rank", "_width",
+        "_km", "_value", "_low", "_high", "_n", "confidence",
+    ]
+    for col in df.columns:
+        if any(fragment in col for fragment in numeric_fragments):
+            df[col] = pd.to_numeric(df[col], errors="ignore")
+    return df
+
+
+def _json_list(raw) -> list[str]:
+    if raw is None or (isinstance(raw, float) and np.isnan(raw)):
+        return []
+    if isinstance(raw, list):
+        return [str(item) for item in raw if str(item).strip()]
+    text = str(raw).strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed if str(item).strip()]
+    except Exception:
+        pass
+    if ";" in text:
+        return [item.strip() for item in text.split(";") if item.strip()]
+    if "," in text and text.startswith("["):
+        return [item.strip().strip('"') for item in text.strip("[]").split(",") if item.strip()]
+    return [text]
+
+
+_REASON_LABELS = {
+    "high_health_need": "High district health need",
+    "capacity_estimated_or_missing": "Capacity is estimated or missing",
+    "doctor_count_estimated_or_missing": "Doctor count is estimated or missing",
+    "wide_capacity_interval": "Wide capacity prediction interval",
+    "wide_doctor_interval": "Wide doctor-count prediction interval",
+    "critical_supply_gap": "Multiple supply fields are missing or weak",
+    "low_join_confidence": "District/PIN join confidence is low",
+    "non_plausible_geo": "Coordinates are not plausible",
+    "external_geocode_needed": "External geocoding/source agreement needed",
+    "wide_geo_uncertainty_band": "Large pre-geocode uncertainty band",
+    "ambiguous_pincode_or_region": "PIN maps ambiguously in India Post",
+    "missing_contact_evidence": "No phone/email/site evidence",
+    "missing_source_urls": "No source URL citation",
+    "sparse_segment": "Sparse facility/operator/state segment",
+    "high_care_gap": "High care-gap score",
+    "high_trust_gap": "Low trustworthy supply relative to need",
+    "higher_uncertainty_level": "District is marked higher uncertainty",
+    "wide_rate_confidence_intervals": "Rate confidence intervals are wide",
+    "small_observed_facility_sample": "Small observed facility sample",
+    "high_critical_supply_gap_rate": "High share of critical supply gaps",
+    "current_coordinate_outside_india": "Current coordinate is outside India",
+    "large_coordinate_pincode_disagreement": "Coordinate is far from PIN centroid",
+    "existing_contradiction_flag": "Existing contradiction flag is set",
+    "missing_coordinate": "Missing coordinate",
+    "far_from_pincode_centroid": "Far from PIN centroid",
+    "moderate_distance_from_pincode_centroid": "Moderate distance from PIN centroid",
+    "high_decision_impact": "High planning impact if wrong",
+    "low_data_readiness": "Low data readiness",
+}
+
+
+def reason_labels(raw) -> list[str]:
+    return [_REASON_LABELS.get(reason, reason.replace("_", " ").title()) for reason in _json_list(raw)]
+
+
+def active_facility_queue() -> pd.DataFrame:
+    df = _read_optional_csv(config.active_facility_queue_path())
+    if df.empty:
+        return df
+    df = _coerce_known_numeric(df)
+    if "source_urls" in df:
+        df["first_source_url"] = df["source_urls"].map(_first_url)
+    return df
+
+
+def active_district_queue() -> pd.DataFrame:
+    df = _read_optional_csv(config.active_district_queue_path())
+    return _coerce_known_numeric(df) if not df.empty else df
+
+
+def geocoder_uncertainty_priors() -> pd.DataFrame:
+    return _read_optional_csv(config.geocoder_uncertainty_priors_path())
+
+
+def explainability_model_card() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Layer": "Need context",
+                "Evidence used": "NFHS district indicators",
+                "What the app can say": "This district has high patient burden for a specialty.",
+                "What it cannot say": "A specific facility has those patients or outcomes.",
+            },
+            {
+                "Layer": "Facility supply",
+                "Evidence used": "FDR extracted claims, service signals, source URLs",
+                "What the app can say": "The dataset contains claimed facilities and service evidence.",
+                "What it cannot say": "The claim is true without corroboration.",
+            },
+            {
+                "Layer": "Uncertainty bands",
+                "Evidence used": "Wilson CIs, empirical p10-p90 intervals, proxy trust bands",
+                "What the app can say": "The recommendation is robust or fragile under finite evidence.",
+                "What it cannot say": "Measured model accuracy without gold labels.",
+            },
+            {
+                "Layer": "External source agreement",
+                "Evidence used": "Google/Mappls metadata, India Post, HFR/ABDM, PM-JAY, OSM/Overture",
+                "What the app can say": "Independent sources agree or conflict on identity/location.",
+                "What it cannot say": "A single geocoder hit proves facility truth.",
+            },
+        ]
+    )
+
+
+def _pct(value, digits: int = 0) -> str:
+    try:
+        if pd.isna(value):
+            return "unknown"
+        return f"{float(value) * 100:.{digits}f}%"
+    except Exception:
+        return "unknown"
+
+
+def _score(value, digits: int = 2) -> str:
+    try:
+        if pd.isna(value):
+            return "unknown"
+        return f"{float(value):.{digits}f}"
+    except Exception:
+        return "unknown"
+
+
+def _int_count(value) -> int:
+    num = pd.to_numeric(value, errors="coerce")
+    return 0 if pd.isna(num) else int(num)
+
+
+def _ci_text(row: pd.Series, low_col: str, high_col: str, *, digits: int = 0) -> str:
+    lo = row.get(low_col)
+    hi = row.get(high_col)
+    if pd.isna(pd.to_numeric(lo, errors="coerce")) or pd.isna(pd.to_numeric(hi, errors="coerce")):
+        return "unknown interval"
+    return f"{_pct(lo, digits)} to {_pct(hi, digits)}"
+
+
+def active_district_match(row: pd.Series) -> pd.Series | None:
+    queue = active_district_queue()
+    if queue.empty:
+        return None
+    state = str(row.get("state_ut", "")).strip().lower()
+    district = str(row.get("district_name", "")).strip().lower()
+    match = queue[
+        queue["state_ut"].astype(str).str.strip().str.lower().eq(state)
+        & queue["district_name"].astype(str).str.strip().str.lower().eq(district)
+    ]
+    return None if match.empty else match.iloc[0]
+
+
+def district_explanation(row: pd.Series, specialty: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    queue_row = active_district_match(row)
+    sig, _ = SPECIALTY_DISTRICT.get(specialty, (None, []))
+    service_value = row.get(sig) if sig else row.get("trustworthy_supply_rate")
+    service_name = sig.replace("_", " ") if sig else "trustworthy supply rate"
+
+    drivers = [
+        {
+            "Signal": "Health need",
+            "Value": _score(row.get("health_need_score")),
+            "Interpretation": "Percentile-style burden score from district NFHS indicators.",
+        },
+        {
+            "Signal": "Care gap",
+            "Value": _score(row.get("care_gap_score")),
+            "Interpretation": "High need combined with limited trustworthy/service-specific supply.",
+        },
+        {
+            "Signal": service_name,
+            "Value": _pct(service_value),
+            "Interpretation": "Observed FDR rows with the relevant service signal; not a facility census.",
+        },
+        {
+            "Signal": "Trustworthy supply rate",
+            "Value": f"{_pct(row.get('trustworthy_supply_rate'))} ({_ci_text(row, 'trustworthy_supply_rate_ci_low', 'trustworthy_supply_rate_ci_high')})",
+            "Interpretation": "Wilson interval over observed facility rows; wide bands mean fragile evidence.",
+        },
+        {
+            "Signal": "Needs-review rate",
+            "Value": f"{_pct(row.get('needs_human_review_rate'))} ({_ci_text(row, 'needs_human_review_rate_ci_low', 'needs_human_review_rate_ci_high')})",
+            "Interpretation": "Rows needing uncertainty review due to weak joins, geo issues, missingness, or contradictions.",
+        },
+        {
+            "Signal": "Critical supply-gap rate",
+            "Value": f"{_pct(row.get('critical_supply_gap_rate'))} ({_ci_text(row, 'critical_supply_gap_rate_ci_low', 'critical_supply_gap_rate_ci_high')})",
+            "Interpretation": "Share of rows with multiple missing/estimated supply fields.",
+        },
+        {
+            "Signal": "Observed facility sample",
+            "Value": f"{_int_count(row.get('observed_facility_rows'))} rows",
+            "Interpretation": "Small samples produce wider intervals and more fragile recommendations.",
+        },
+        {
+            "Signal": "District data quality",
+            "Value": f"{_score(row.get('district_data_quality_score'))} / {str(row.get('district_uncertainty_level', 'unknown')).title()}",
+            "Interpretation": "Composite of readiness, join confidence, geography, source URLs, and review burden.",
+        },
+    ]
+    if queue_row is not None:
+        drivers.insert(
+            0,
+            {
+                "Signal": "Active uncertainty rank",
+                "Value": f"#{int(queue_row.get('active_uncertainty_rank'))} · {_score(queue_row.get('active_uncertainty_score'))}",
+                "Interpretation": f"Action: {str(queue_row.get('active_learning_action')).replace('_', ' ')}.",
+            },
+        )
+
+    reasons = pd.DataFrame(
+        {
+            "Reason": reason_labels(queue_row.get("active_learning_reasons") if queue_row is not None else ""),
+        }
+    )
+    return pd.DataFrame(drivers), reasons
+
+
+def facility_explanation(row: pd.Series) -> pd.DataFrame:
+    sources = ", ".join(_json_list(row.get("external_evidence_sources_to_check"))) or "Source URLs / registry search"
+    return pd.DataFrame(
+        [
+            {
+                "Signal": "Active uncertainty",
+                "Value": f"#{int(row.get('active_uncertainty_rank', 0))} · {_score(row.get('active_uncertainty_score'))}",
+                "Interpretation": f"Action: {str(row.get('active_learning_action', '')).replace('_', ' ')}.",
+            },
+            {
+                "Signal": "Proxy trust band",
+                "Value": f"{_score(row.get('proxy_trust_interval_low'))} to {_score(row.get('proxy_trust_interval_high'))}",
+                "Interpretation": "Heuristic evidence-quality band, not measured accuracy.",
+            },
+            {
+                "Signal": "External geo uncertainty",
+                "Value": f"{_score(row.get('external_geo_uncertainty_score'))}; {row.get('pre_geocode_uncertainty_band_low_km', 'unknown')} to {row.get('pre_geocode_uncertainty_band_high_km', 'unknown')} km",
+                "Interpretation": str(row.get("external_validation_action", "")).replace("_", " "),
+            },
+            {
+                "Signal": "Capacity estimate",
+                "Value": f"{row.get('capacity_display_value', 'unknown')} ({row.get('capacity_estimate_interval_low', 'unknown')} to {row.get('capacity_estimate_interval_high', 'unknown')})",
+                "Interpretation": f"{row.get('capacity_status', 'unknown')} with interval width {_score(row.get('capacity_relative_interval_width'))}.",
+            },
+            {
+                "Signal": "Doctor estimate",
+                "Value": f"{row.get('doctor_count_display_value', 'unknown')} ({row.get('doctor_count_estimate_interval_low', 'unknown')} to {row.get('doctor_count_estimate_interval_high', 'unknown')})",
+                "Interpretation": f"{row.get('doctor_count_status', 'unknown')} with interval width {_score(row.get('doctor_count_relative_interval_width'))}.",
+            },
+            {
+                "Signal": "Join and geo",
+                "Value": f"join {_score(row.get('join_confidence'))}; {row.get('geo_quality', 'unknown')}",
+                "Interpretation": "Facility-to-district health context depends on this join quality.",
+            },
+            {
+                "Signal": "Evidence to check",
+                "Value": sources,
+                "Interpretation": "Independent agreement can narrow uncertainty; conflicts keep the row fragile.",
+            },
+        ]
+    )
+
+
+def geo_candidate_explanation(row: pd.Series) -> tuple[pd.DataFrame, pd.DataFrame]:
+    checks = pd.DataFrame(
+        [
+            {
+                "Check": "Current geo failure",
+                "Value": str(row.get("geo_review_reason", "unknown")).replace("_", " "),
+                "Why it matters": "Wrong coordinates can make supply appear in the wrong district.",
+            },
+            {
+                "Check": "Pre-geocode uncertainty band",
+                "Value": f"{row.get('pre_geocode_uncertainty_band_low_km', 'unknown')} to {row.get('pre_geocode_uncertainty_band_high_km', 'unknown')} km",
+                "Why it matters": "This is the planning uncertainty before Google/Mappls or registry evidence.",
+            },
+            {
+                "Check": "Fuzzy precheck",
+                "Value": str(row.get("fuzzy_precheck_status", "unknown")).replace("_", " "),
+                "Why it matters": str(row.get("fuzzy_precheck_reasons", "") or "No precheck conflict recorded."),
+            },
+            {
+                "Check": "External validation action",
+                "Value": str(row.get("external_validation_action", "unknown")).replace("_", " "),
+                "Why it matters": str(row.get("geocoder_acceptance_rule", "") or "Compare geocoder metadata with admin geography."),
+            },
+            {
+                "Check": "Expected precision",
+                "Value": str(row.get("geocoder_expected_precision_after_success", "unknown")).replace("_", " "),
+                "Why it matters": "Facility routing requires stronger precision than district/H3 planning.",
+            },
+        ]
+    )
+    reasons = pd.DataFrame(
+        {
+            "Reason code": reason_labels(row.get("external_uncertainty_reason_codes")),
+        }
+    )
+    return checks, reasons
+
+
 def load_districts() -> pd.DataFrame:
     """Load the cleaned district table (CSV or warehouse, same as facilities)."""
     if os.environ.get("DATA_BACKEND", "csv").lower() == "warehouse":
@@ -855,6 +1170,22 @@ def _geo_reason(row: pd.Series) -> str:
 
 def geo_validation_candidates(facilities: pd.DataFrame, top_n: int = 100) -> pd.DataFrame:
     """Rows that should go through LLM parsing + geocoder validation."""
+    artifact = _read_optional_csv(config.geo_validation_candidates_path())
+    if not artifact.empty:
+        artifact = _coerce_known_numeric(artifact)
+        if "current_coordinates" not in artifact and {"facility_latitude", "facility_longitude"}.issubset(artifact.columns):
+            artifact["current_coordinates"] = (
+                pd.to_numeric(artifact["facility_latitude"], errors="coerce").round(6).astype(str)
+                + ", "
+                + pd.to_numeric(artifact["facility_longitude"], errors="coerce").round(6).astype(str)
+            )
+        if "first_source_url" not in artifact and "source_urls" in artifact:
+            artifact["first_source_url"] = artifact["source_urls"].map(_first_url)
+        sort_col = "external_validation_priority_score"
+        if sort_col not in artifact:
+            sort_col = "geo_review_score" if "geo_review_score" in artifact else artifact.columns[0]
+        return artifact.sort_values(sort_col, ascending=False).head(top_n).reset_index(drop=True)
+
     d = facilities.copy()
     geo_text = d["geo_quality"].astype(str).str.lower()
     mask = (
@@ -1003,12 +1334,36 @@ def facility_points(df: pd.DataFrame) -> pd.DataFrame:
         default="Unknown",
     )
     out = pd.DataFrame({
+        "unique_id": d["unique_id"].fillna(""),
         "facility_name": d["facility_name"].fillna("Unnamed facility"),
         "facility_type": d["facilityTypeId"].fillna("—"),
         "city": d["address_city"].fillna("—"),
         "state": d["address_stateOrRegion"].fillna("—"),
         "district": d["district_name"].fillna("—"),
+        "pincode": d.get("pincode_extracted", pd.Series("", index=d.index)).fillna(""),
         "geo_quality": d["geo_quality"].fillna("—"),
+        "geo_distance_km_to_pincode_centroid": d["geo_distance_km_to_pincode_centroid"],
+        "join_strategy": d.get("join_strategy", pd.Series("", index=d.index)).fillna(""),
+        "join_confidence": d.get("join_confidence", pd.Series(np.nan, index=d.index)),
+        "join_uncertainty_reason": d.get("join_uncertainty_reason", pd.Series("", index=d.index)).fillna(""),
+        "data_readiness_score": d.get("data_readiness_score", pd.Series(np.nan, index=d.index)),
+        "semantic_data_quality_score": d.get("semantic_data_quality_score", pd.Series(np.nan, index=d.index)),
+        "supply_data_confidence_score": d.get("supply_data_confidence_score", pd.Series(np.nan, index=d.index)),
+        "capacity_display_value": d.get("capacity_display_value", d.get("capacity_estimate", pd.Series(np.nan, index=d.index))),
+        "capacity_estimate_interval_low": d.get("capacity_estimate_interval_low", pd.Series(np.nan, index=d.index)),
+        "capacity_estimate_interval_high": d.get("capacity_estimate_interval_high", pd.Series(np.nan, index=d.index)),
+        "capacity_confidence": d.get("capacity_confidence", pd.Series("", index=d.index)).fillna(""),
+        "capacity_is_estimated": d.get("capacity_is_estimated", pd.Series(False, index=d.index)),
+        "doctor_count_display_value": d.get("doctor_count_display_value", d.get("doctor_count_estimate", pd.Series(np.nan, index=d.index))),
+        "doctor_count_estimate_interval_low": d.get("doctor_count_estimate_interval_low", pd.Series(np.nan, index=d.index)),
+        "doctor_count_estimate_interval_high": d.get("doctor_count_estimate_interval_high", pd.Series(np.nan, index=d.index)),
+        "doctor_count_confidence": d.get("doctor_count_confidence", pd.Series("", index=d.index)).fillna(""),
+        "doctor_count_is_estimated": d.get("doctor_count_is_estimated", pd.Series(False, index=d.index)),
+        "semantic_missing_critical_count": d.get("semantic_missing_critical_count", pd.Series(np.nan, index=d.index)),
+        "has_source_urls": d["has_source_urls"],
+        "has_contact_evidence": d["has_contact_evidence"],
+        "pincode_is_ambiguous": d.get("pincode_is_ambiguous", pd.Series(False, index=d.index)),
+        "pincode_region_is_ambiguous": d.get("pincode_region_is_ambiguous", pd.Series(False, index=d.index)),
         "status": status,
         "lat": d["facility_latitude"],
         "lon": d["facility_longitude"],
