@@ -587,7 +587,9 @@ def _coerce_known_numeric(df: pd.DataFrame) -> pd.DataFrame:
     ]
     for col in df.columns:
         if any(fragment in col for fragment in numeric_fragments):
-            df[col] = pd.to_numeric(df[col], errors="ignore")
+            converted = pd.to_numeric(df[col], errors="coerce")
+            if converted.notna().any():
+                df[col] = converted
     return df
 
 
