@@ -1,0 +1,7 @@
+provider_status,location_type,partial_match,proxy_confidence_low,proxy_confidence_high,planning_uncertainty_radius_km,recommended_action,explainability_note
+OK,ROOFTOP,False,0.86,0.96,0.1,accept_if_admin_and_pincode_match,"Precise geocode, but still corroborate state/district/PIN against India Post before treating it as facility-level evidence."
+OK,RANGE_INTERPOLATED,False,0.68,0.84,0.5,accept_for_planning_if_boundary_checks_pass,Approximate street-segment geocode; usable for district/H3 planning if it stays inside the expected PIN/district.
+OK,GEOMETRIC_CENTER,False,0.48,0.68,3.0,use_for_neighborhood_only_or_retry_with_landmark,"Center of a region/street/polygon rather than a facility doorstep; fine for coarse maps, weak for facility routing."
+OK,APPROXIMATE,False,0.2,0.48,25.0,retry_with_landmark_or_alternate_provider,Approximate result should remain in the uncertainty queue unless another external source corroborates it.
+OK,ANY,True,0.18,0.6,15.0,compare_name_admin_pincode_then_queue_if_high_impact,Partial matches can be right or wrong; the product should explain which address tokens matched and which did not.
+ZERO_RESULTS,NONE,False,0.0,0.18,,search_hfr_pmjay_mappls_osm_or_mark_unknown,No geocoder result is not proof the facility is fake; treat it as missing external evidence.
