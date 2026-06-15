@@ -1,0 +1,590 @@
+{
+  "workspace": "https://dbc-54942fa9-145a.cloud.databricks.com",
+  "warehouse_id": "1b331b704066b677",
+  "source_tables": {
+    "facilities": {
+      "rows": 10088,
+      "columns": 48
+    },
+    "india_post_pincode_directory": {
+      "rows": 165627,
+      "columns": 11
+    },
+    "nfhs_5_district_health_indicators": {
+      "rows": 706,
+      "columns": 109
+    }
+  },
+  "cleaned_rows": 10077,
+  "cleaned_columns": 102,
+  "district_cleaned_rows": 494,
+  "district_cleaned_columns": 98,
+  "unmatched_pincode_district_rows": 60,
+  "pincode_bridge_rows": 19586,
+  "join_strategy_counts": {
+    "pincode_district_state_exact": 9032,
+    "pincode_only_no_health_match": 397,
+    "facility_city_state_fallback": 301,
+    "no_valid_pincode": 150,
+    "pincode_district_state_fuzzy": 131,
+    "unjoined": 66
+  },
+  "geo_quality_counts": {
+    "plausible": 7861,
+    "moderate_distance_from_pincode_centroid": 1164,
+    "far_from_pincode_centroid": 928,
+    "missing_coordinates": 118,
+    "outside_india_bbox": 6
+  },
+  "district_uncertainty_counts": {
+    "lower": 209,
+    "higher": 180,
+    "medium": 105
+  },
+  "needs_human_review_rows": 3029,
+  "needs_human_review_pct": 30.05854917138037,
+  "field_coverage": {
+    "name": {
+      "present_rows": 10023,
+      "present_pct": 99.35567010309279
+    },
+    "address_zipOrPostcode": {
+      "present_rows": 10022,
+      "present_pct": 99.34575733544806
+    },
+    "latitude": {
+      "present_rows": 9970,
+      "present_pct": 98.83029341792229
+    },
+    "longitude": {
+      "present_rows": 9970,
+      "present_pct": 98.83029341792229
+    },
+    "yearEstablished": {
+      "present_rows": 4804,
+      "present_pct": 47.620935765265656
+    },
+    "capacity": {
+      "present_rows": 2520,
+      "present_pct": 24.980174464710547
+    },
+    "numberDoctors": {
+      "present_rows": 3633,
+      "present_pct": 36.01308485329104
+    },
+    "description": {
+      "present_rows": 10006,
+      "present_pct": 99.18715305313243
+    },
+    "procedure": {
+      "present_rows": 9942,
+      "present_pct": 98.55273592386995
+    },
+    "equipment": {
+      "present_rows": 9863,
+      "present_pct": 97.76962727993656
+    },
+    "capability": {
+      "present_rows": 9966,
+      "present_pct": 98.79064234734338
+    },
+    "source_urls": {
+      "present_rows": 9970,
+      "present_pct": 98.83029341792229
+    }
+  },
+  "confidence_intervals": {
+    "valid_pin_rate_95ci": [
+      0.964638410222465,
+      0.9714937476322918
+    ],
+    "health_join_rate_95ci": [
+      0.9343320525796173,
+      0.9436700380394836
+    ],
+    "geo_in_india_bbox_rate_95ci": [
+      0.9853487811943256,
+      0.9896690189068087
+    ],
+    "needs_review_rate_95ci": [
+      0.29171042063365565,
+      0.3096125482740197
+    ]
+  },
+  "distribution_profiles": {
+    "capacity_num": {
+      "n": 2511,
+      "mean": 191.54559936280367,
+      "median": 100.0,
+      "std": 320.90762377910403,
+      "min": 0.0,
+      "p25": 35.0,
+      "p75": 200.0,
+      "p95": 798.0,
+      "max": 4000.0,
+      "skew": 4.099944334035053,
+      "kurtosis": 23.49900821462122,
+      "normaltest_k2": 2182.7801367866386,
+      "normaltest_pvalue": 0.0,
+      "log1p_normaltest_pvalue": 0.009221458853239082
+    },
+    "number_doctors_num": {
+      "n": 3629,
+      "mean": 31.712317442821714,
+      "median": 2.0,
+      "std": 307.6031794425166,
+      "min": 0.0,
+      "p25": 1.0,
+      "p75": 10.0,
+      "p95": 93.79999999999973,
+      "max": 15000.0,
+      "skew": 36.014654010638,
+      "kurtosis": 1609.5667579229926,
+      "normaltest_k2": 10194.774248035774,
+      "normaltest_pvalue": 0.0,
+      "log1p_normaltest_pvalue": 2.601330741836655e-230
+    },
+    "followers_num": {
+      "n": 8873,
+      "mean": 8066.423193959202,
+      "median": 245.0,
+      "std": 244708.6121009889,
+      "min": 0.0,
+      "p25": 11.0,
+      "p75": 1000.0,
+      "p95": 5390.399999999994,
+      "max": 15000000.0,
+      "skew": 54.44777321150226,
+      "kurtosis": 3221.876722654718,
+      "normaltest_k2": 14966.733736693539,
+      "normaltest_pvalue": 0.0,
+      "log1p_normaltest_pvalue": 1.0776969350518866e-05
+    },
+    "post_count_num": {
+      "n": 3774,
+      "mean": 44.19263381028087,
+      "median": 0.0,
+      "std": 1369.3892868980279,
+      "min": 0.0,
+      "p25": 0.0,
+      "p75": 1.0,
+      "p95": 6.0,
+      "max": 59000.0,
+      "skew": 42.38074320301063,
+      "kurtosis": 1819.053800788137,
+      "normaltest_k2": 11243.297642515947,
+      "normaltest_pvalue": 0.0,
+      "log1p_normaltest_pvalue": 7.032075306744283e-189
+    },
+    "data_readiness_score": {
+      "n": 10077,
+      "mean": 0.9650927855512553,
+      "median": 1.0,
+      "std": 0.11559958055960554,
+      "min": 0.0,
+      "p25": 1.0,
+      "p75": 1.0,
+      "p95": 1.0,
+      "max": 1.0,
+      "skew": -5.428518359113592,
+      "kurtosis": 36.48089167457579,
+      "normaltest_k2": 5337.3405824705405,
+      "normaltest_pvalue": 0.0,
+      "log1p_normaltest_pvalue": 0.0
+    },
+    "medical_desert_priority_score": {
+      "n": 9464,
+      "mean": 0.3592496557587358,
+      "median": 0.3570625121858907,
+      "std": 0.09160606613206226,
+      "min": 0.17770207790941722,
+      "p25": 0.2944121359046996,
+      "p75": 0.39883752575762793,
+      "p95": 0.5300375038708123,
+      "max": 0.7825236884158533,
+      "skew": 0.7105545931154407,
+      "kurtosis": 1.2196874740061663,
+      "normaltest_k2": 493.860788369063,
+      "normaltest_pvalue": 5.747677492266438e-108,
+      "log1p_normaltest_pvalue": 2.8685648522024465e-51
+    },
+    "health_need_score": {
+      "n": 9464,
+      "mean": 0.4799352219473706,
+      "median": 0.4866619452313503,
+      "std": 0.09551036004485251,
+      "min": 0.2401440037771482,
+      "p25": 0.4052762039660056,
+      "p75": 0.5642115203021719,
+      "p95": 0.6181539187913125,
+      "max": 0.7699480642115203,
+      "skew": -0.2090144642954945,
+      "kurtosis": -0.7594150558029096,
+      "normaltest_k2": 386.40417336524786,
+      "normaltest_pvalue": 1.239937690646676e-84,
+      "log1p_normaltest_pvalue": 2.596497327491911e-62
+    },
+    "facility_count_in_joined_district_sample": {
+      "n": 9464,
+      "mean": 111.49598478444632,
+      "median": 73.0,
+      "std": 106.12078511904814,
+      "min": 1.0,
+      "p25": 23.0,
+      "p75": 195.0,
+      "p95": 319.0,
+      "max": 342.0,
+      "skew": 0.9007232767898159,
+      "kurtosis": -0.5271617469854726,
+      "normaltest_k2": 616.8938214891174,
+      "normaltest_pvalue": 1.1046093208291625e-134,
+      "log1p_normaltest_pvalue": 7.299557053009762e-76
+    }
+  },
+  "district_distribution_profiles": {
+    "observed_facility_rows": {
+      "n": 494,
+      "mean": 19.157894736842106,
+      "median": 5.0,
+      "std": 42.10215732646785,
+      "min": 1.0,
+      "p25": 2.0,
+      "p75": 17.0,
+      "p95": 81.0,
+      "max": 342.0,
+      "skew": 4.639330881513082,
+      "kurtosis": 25.391804446298682,
+      "normaltest_k2": 496.63149752291963,
+      "normaltest_pvalue": 1.4382704019163296e-108,
+      "log1p_normaltest_pvalue": 2.2606262910218457e-11
+    },
+    "district_medical_desert_priority_score": {
+      "n": 494,
+      "mean": 0.4968333111120032,
+      "median": 0.4993796605058626,
+      "std": 0.12381768645897771,
+      "min": 0.17770207790941722,
+      "p25": 0.4026837662191816,
+      "p75": 0.5913798263295523,
+      "p95": 0.6943513265178362,
+      "max": 0.7825236884158533,
+      "skew": -0.02821377372291737,
+      "kurtosis": -0.7617827035319089,
+      "normaltest_k2": 32.13061435766468,
+      "normaltest_pvalue": 1.0542066274462766e-07,
+      "log1p_normaltest_pvalue": 3.537541808350062e-06
+    },
+    "district_data_quality_score": {
+      "n": 494,
+      "mean": 0.8796093117408906,
+      "median": 0.912,
+      "std": 0.10010480914383746,
+      "min": 0.63,
+      "p25": 0.83,
+      "p75": 0.9572499999999999,
+      "p95": 0.988,
+      "max": 0.988,
+      "skew": -0.9053114666747155,
+      "kurtosis": -0.26037721865382757,
+      "normaltest_k2": 53.67461124608443,
+      "normaltest_pvalue": 2.2115983576768256e-12,
+      "log1p_normaltest_pvalue": 1.3810307662053113e-13
+    },
+    "health_need_score": {
+      "n": 494,
+      "mean": 0.49567317249869053,
+      "median": 0.49457034938621336,
+      "std": 0.09333889314367613,
+      "min": 0.2401440037771482,
+      "p25": 0.4231143767705383,
+      "p75": 0.5645508734655335,
+      "p95": 0.6394859537299337,
+      "max": 0.7699480642115203,
+      "skew": 0.03429560565724821,
+      "kurtosis": -0.5513898458967099,
+      "normaltest_k2": 11.465323605337597,
+      "normaltest_pvalue": 0.0032384456476500117,
+      "log1p_normaltest_pvalue": 0.005336169525697083
+    },
+    "needs_human_review_rate": {
+      "n": 494,
+      "mean": 0.34657758673323097,
+      "median": 0.25,
+      "std": 0.3422216073844246,
+      "min": 0.0,
+      "p25": 0.0,
+      "p75": 0.5,
+      "p95": 1.0,
+      "max": 1.0,
+      "skew": 0.8376593564895807,
+      "kurtosis": -0.5651112407311247,
+      "normaltest_k2": 58.370650016949966,
+      "normaltest_pvalue": 2.1133644432376987e-13,
+      "log1p_normaltest_pvalue": 1.3512013336927455e-32
+    },
+    "plausible_geo_rate": {
+      "n": 494,
+      "mean": 0.6885884040058191,
+      "median": 0.8,
+      "std": 0.32863295120946623,
+      "min": 0.0,
+      "p25": 0.5,
+      "p75": 1.0,
+      "p95": 1.0,
+      "max": 1.0,
+      "skew": -0.9926226279963931,
+      "kurtosis": -0.20633407491143174,
+      "normaltest_k2": 60.952849221623005,
+      "normaltest_pvalue": 5.811081459239668e-14,
+      "log1p_normaltest_pvalue": 3.036566978201547e-18
+    },
+    "capacity_parse_rate": {
+      "n": 494,
+      "mean": 0.2895790493651132,
+      "median": 0.25,
+      "std": 0.27698444863625954,
+      "min": 0.0,
+      "p25": 0.011904761904761904,
+      "p75": 0.4,
+      "p95": 1.0,
+      "max": 1.0,
+      "skew": 1.2260821959256443,
+      "kurtosis": 1.0785049442416321,
+      "normaltest_k2": 94.32581261073236,
+      "normaltest_pvalue": 3.2916226422021827e-21,
+      "log1p_normaltest_pvalue": 3.809393119948961e-13
+    },
+    "doctor_parse_rate": {
+      "n": 494,
+      "mean": 0.2827103059895892,
+      "median": 0.2857142857142857,
+      "std": 0.25442509710884875,
+      "min": 0.0,
+      "p25": 0.0,
+      "p75": 0.4,
+      "p95": 1.0,
+      "max": 1.0,
+      "skew": 0.959559659550623,
+      "kurtosis": 1.0233691714704554,
+      "normaltest_k2": 68.71372762083634,
+      "normaltest_pvalue": 1.1995093335796005e-15,
+      "log1p_normaltest_pvalue": 1.4245503010901188e-14
+    }
+  },
+  "normality_notes": {
+    "capacity_num": "not_gaussian",
+    "number_doctors_num": "not_gaussian",
+    "followers_num": "not_gaussian",
+    "post_count_num": "not_gaussian",
+    "data_readiness_score": "not_gaussian",
+    "medical_desert_priority_score": "not_gaussian",
+    "health_need_score": "not_gaussian",
+    "facility_count_in_joined_district_sample": "not_gaussian"
+  },
+  "top_district_medical_desert_priority_rows": [
+    {
+      "district_name": "Kendujhar ",
+      "state_ut": "Odisha",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.7144711992445704,
+      "district_medical_desert_priority_score": 0.7825236884158533,
+      "district_data_quality_score": 0.688,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Malkangiri District Headquarters Hospital",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Rayagada ",
+      "state_ut": "Odisha",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6874409820585458,
+      "district_medical_desert_priority_score": 0.7649540472449373,
+      "district_data_quality_score": 0.988,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Christian Hospital Bissamcuttack",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Katihar ",
+      "state_ut": "Bihar",
+      "observed_facility_rows": 2,
+      "health_need_score": 0.7699480642115203,
+      "district_medical_desert_priority_score": 0.761903488701051,
+      "district_data_quality_score": 0.988,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Katihar Medical College and Hospital, Katihar; Accurate Diagno Lab",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Kishanganj ",
+      "state_ut": "Bihar",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6751062322946176,
+      "district_medical_desert_priority_score": 0.7569364598983841,
+      "district_data_quality_score": 0.931,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "A.R DENTAL EXPERT - Kishanganj Branch",
+      "predominant_join_uncertainty": "PIN code maps to multiple districts or states in India Post."
+    },
+    {
+      "district_name": "Kalahandi ",
+      "state_ut": "Odisha",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6696175637393768,
+      "district_medical_desert_priority_score": 0.7533688253374775,
+      "district_data_quality_score": 0.988,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Kalahandi Dental Clinic",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Hailakandi ",
+      "state_ut": "Assam",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6677289896128423,
+      "district_medical_desert_priority_score": 0.7521412521552301,
+      "district_data_quality_score": 0.901,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "SK Roy Civil Hospital",
+      "predominant_join_uncertainty": "PIN code maps to multiple districts or states in India Post."
+    },
+    {
+      "district_name": "Siwan ",
+      "state_ut": "Bihar",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6562204910292729,
+      "district_medical_desert_priority_score": 0.74466072807591,
+      "district_data_quality_score": 0.688,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Adarsh Hospital",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Dumka ",
+      "state_ut": "Jharkhand",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6434726156751652,
+      "district_medical_desert_priority_score": 0.7363746090957399,
+      "district_data_quality_score": 0.688,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Care Diagnostic",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Madhepura ",
+      "state_ut": "Bihar",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6358593012275732,
+      "district_medical_desert_priority_score": 0.7314259547048052,
+      "district_data_quality_score": 0.988,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Koshi Hospital",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Seoni ",
+      "state_ut": "Madhya Pradesh",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6336166194523135,
+      "district_medical_desert_priority_score": 0.7299682115508863,
+      "district_data_quality_score": 0.988,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Jindal Hospital Diagnostics and Research Centre",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Fazilka ",
+      "state_ut": "Punjab",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6295443814919736,
+      "district_medical_desert_priority_score": 0.7273212568766654,
+      "district_data_quality_score": 0.988,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Dr. Chatterjee Clinic",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Simdega ",
+      "state_ut": "Jharkhand",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6259442870632672,
+      "district_medical_desert_priority_score": 0.7249811954980063,
+      "district_data_quality_score": 0.688,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Shanti Bhawan Medical Center",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Supaul ",
+      "state_ut": "Bihar",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6252360717658167,
+      "district_medical_desert_priority_score": 0.7245208555546634,
+      "district_data_quality_score": 0.988,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Rameshwar Homoeo Hall",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Tapi ",
+      "state_ut": "Gujarat",
+      "observed_facility_rows": 2,
+      "health_need_score": 0.7114612842304059,
+      "district_medical_desert_priority_score": 0.7238870817133266,
+      "district_data_quality_score": 0.838,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Mamta Hospital; Arihant Imaging Centre",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    },
+    {
+      "district_name": "Bahraich ",
+      "state_ut": "Uttar Pradesh",
+      "observed_facility_rows": 1,
+      "health_need_score": 0.6167374881964117,
+      "district_medical_desert_priority_score": 0.7189967762345502,
+      "district_data_quality_score": 0.988,
+      "district_uncertainty_level": "higher",
+      "sample_facility_names": "Bahraich Diagnostic Centre",
+      "predominant_join_uncertainty": "Exact PIN-to-district-to-health join."
+    }
+  ],
+  "plots": {
+    "field_coverage": "output/plots/field_coverage.png",
+    "join_strategy": "output/plots/join_strategy_distribution.png",
+    "data_readiness": "output/plots/data_readiness_distribution.png",
+    "district_data_quality": "output/plots/district_data_quality_distribution.png",
+    "numeric_distributions": "output/plots/numeric_distributions_log.png",
+    "state_counts": "output/plots/facility_counts_by_state.png",
+    "medical_desert_proxy": "output/plots/medical_desert_proxy_scatter.png",
+    "geo_quality": "output/plots/geo_quality_scatter.png"
+  },
+  "screenshot_context": {
+    "problem": "10,000 messy healthcare facility records across India; extracted structured fields plus uneven free-text claims.",
+    "requirements": [
+      "Use the provided facility dataset.",
+      "Cite underlying facility text for important claims, recommendations, scores, or rankings.",
+      "Communicate uncertainty rather than treating weak evidence as fact.",
+      "Persist actions such as notes, overrides, shortlists, scenarios, or review decisions."
+    ],
+    "data_warning": "FDR turns open-web text into structured data through GenAI extraction and entity resolution; field coverage should be treated as claims to verify, not ground truth.",
+    "prior_notes": [
+      "Target users include doctors/medical staff and government researchers/planners.",
+      "A quality dataset should be reusable and open-source friendly.",
+      "Merging records can create inaccuracy, so joins need explicit uncertainty.",
+      "Distribution analysis, confidence intervals, Bayesian-style confidence updates, and supervised learning from a golden dataset were suggested directions."
+    ]
+  },
+  "statistical_methods": [
+    "Field missingness/coverage profiling.",
+    "Regex-based type parsing with parse-failure and extreme-outlier flags.",
+    "India bounding-box and pincode-centroid distance checks for geospatial outliers.",
+    "Modal pincode bridge with ambiguity counts before joining to NFHS districts.",
+    "Exact and high-threshold fuzzy district matching within state; match strategy and score retained.",
+    "Wilson 95% confidence intervals for rates such as pincode validity, join success, and review flags.",
+    "Skew/kurtosis and D'Agostino normality tests on parsed numeric fields.",
+    "Log1p visualizations for heavy-tailed facility numeric fields.",
+    "Percentile-rank health need scoring to avoid Gaussian assumptions on bounded NFHS percentages.",
+    "Planner proxy score combining district health need and inverse sample facility coverage.",
+    "District-level aggregation to align facility evidence with the NFHS district grain."
+  ]
+}
