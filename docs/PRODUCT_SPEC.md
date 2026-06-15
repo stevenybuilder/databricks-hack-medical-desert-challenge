@@ -33,9 +33,17 @@ Named audience (host notes — Michael Burk): (1) **Doctors and medical staff**,
 
 ## Core product
 
-A **VF-Match-style, map-heavy app** spined on a **"Top Care Gaps for your specialty"** leaderboard, powered by a facility **trust engine** and a **predictive model** that auto-scores newly-crawled facilities, surfacing **patient-condition burden** and **what to verify** per region.
+A **VF-Match-style, map-heavy app** spined on a **"Top Care Gaps for your specialty"** leaderboard, powered by a facility **trust/uncertainty engine** that scores evidence quality for newly-crawled facilities, surfacing **patient-condition burden** and **which evidence is fragile** per region.
 
 One-liner for judges: _"VF Match shows you the deserts. We tell you which are real, how sure we are, what conditions you'll face there, and what to do about each — and we keep it true as new facilities come in."_
+
+The trust layer is explicitly uncertainty-aware. Because the hackathon cannot rely
+on human verification labels, it uses confidence intervals, empirical prediction
+intervals, weak/proxy labels, and active uncertainty ranking instead of claiming
+measured facility-truth accuracy. External datasets and geocoding APIs are used as
+source-agreement signals: they can narrow uncertainty bands when Google/Mappls,
+India Post, HFR/ABDM, PM-JAY, OSM/Overture, and source URLs agree, but they do
+not become gold labels by themselves.
 
 ## The clean non-technical workflow (5 steps)
 
@@ -46,9 +54,10 @@ One-liner for judges: _"VF Match shows you the deserts. We tell you which are re
 4. Understand the region:
      - Patient conditions most prevalent here  (NFHS district indicators)
      - Facilities that exist + trust score      (the engine)
-     - What to verify before relying on them    (unverified/contradicted claims, cited)
+     - Which evidence is fragile                (unverified/contradicted/estimated claims, cited)
      - How sure we are                          (district uncertainty level)
-5. Save it                        → shortlist regions/facilities, notes (persistence)
+5. Save or stress-test it         → shortlist regions/facilities, notes, and inspect
+                                     the active uncertainty queue
 ```
 
 ## Patient-condition focus (the doctor value)
@@ -56,8 +65,10 @@ One-liner for judges: _"VF Match shows you the deserts. We tell you which are re
 Per region, the doctor gets a 4-part answer, all from existing cleaned columns:
 1. **Where am I needed?** → specialty-matched `care_gap_score` (leaderboard)
 2. **What will I treat?** → patient-condition profile from NFHS-5 (e.g. "21% institutional births, 70% women anaemic, ~0% cervical screening")
-3. **What's actually there?** → trustworthy facilities + what to verify (cited `sample_claim_evidence` / `sample_source_urls`)
+3. **What's actually there?** → trustworthy/proxy facilities + fragile evidence (cited `sample_claim_evidence` / `sample_source_urls`)
 4. **How sure are we?** → `district_uncertainty_level`
+5. **What should I distrust or enrich?** → active uncertainty queue over facilities
+   and districts.
 
 ### Specialty ↔ condition ↔ supply mapping
 
@@ -85,19 +96,43 @@ Per region, the doctor gets a 4-part answer, all from existing cleaned columns:
 | `referral_or_capacity_candidate` | 99 | Capacity exists → refer here |
 | `mixed_or_monitor` | 279 | Monitor |
 
-## Screens
+## Screens (implemented as three tabs sharing the specialty filter)
 
-1. **Map + leaderboard** — H3 hexbin choropleth (red=poor → green=good coverage) + "Top Care Gaps for <specialty>" ranked list. The 8 `real_desert_candidate` districts headline.
-2. **Region detail** — patient-condition profile (NFHS) + facilities with trust scores + cited evidence + `planning_category` recommendation chip + uncertainty band.
-3. **Shortlist / notes** — persisted user actions (Delta table).
-4. **(Stretch) Ask AI** — Foundation Model API for NL Q&A / surfacing recommendations.
+1. **🗺️ Map** — H3 hexbin layer (green→amber→red) + clickable facility points colored by
+   trust status (passed / needs-review / contradicted). Hover tooltip; **click a dot →
+   map flies in + facility detail card** with status badge, location, claimed text, and a
+   **cited source link**. Controls: map-layer, basemap (Voyager/Positron/Dark), hex-size,
+   geo-flagged toggle, show-facilities. Right panel: coverage KPIs + distribution.
+2. **📊 Top care gaps** — specialty-aware leaderboard (need × low trustworthy supply) with
+   `planning_category` recommendation chips (deploy / verify / fix / refer / monitor).
+   Row-click → **region detail**: recommendation, patient-condition profile (NFHS bars),
+   need/trust/uncertainty metrics, and cited sample evidence.
+3. **Uncertainty Queue** — active-learning-inspired ranked facility and district
+   rows. Each row shows the uncertainty score, action, reasons, confidence intervals,
+   estimated capacity/doctors, source/contact fields, and why the row affects the
+   recommendation. Includes a geo fix pipeline where Databricks `ai_query` parses
+   messy Indian addresses and Google Maps/Mappls validates only the physical location.
+   The queue stores provider status, location type, partial-match flag, place ID,
+   admin-geography agreement, and pre/post geocode uncertainty bands.
+   It also shows missing/incomplete data volume and the treatment plan: registry/POI
+   enrichment where possible, estimates with intervals for sparse numeric fields,
+   and explicit unknown/review states when evidence is absent.
+4. **Shortlist / notes** — persisted user actions (Delta table). _(Phase 3)_
+5. **Golden Prediction Report Card** — golden-label coverage, source tiers,
+   supervised metrics on held-out corroborated labels, proxy-label limits,
+   confidence intervals, interval widths, sensitivity checks, and known blind spots.
+   _(Phase 5)_
+6. **(Stretch) Ask AI** — Foundation Model API for NL Q&A / surfacing recommendations.
 
 ## Demo arc (science-fair walk-up)
 
 1. Open on the leaderboard: "These are the worst care gaps for an OB/GYN in India." (instant impact)
 2. Click #1 (a `real_desert_candidate`): map flies in → condition profile + "0 trustworthy maternity facilities here."
 3. Click a `phantom_desert_or_verification_gap` (e.g. the ocean hospital): "Looks covered, but this 'hospital' is geolocated in the Atlantic and its ICU claim is uncorroborated — so we say *verify*, not *build*."
-4. "And when a new facility is crawled, the predictive engine scores it automatically — here's the calibration proving it's trustworthy."
+4. Open the Uncertainty Queue: "We are not pretending we have human labels. This
+   ranks the records and districts where the evidence most threatens the decision."
+5. Show the geo fix pipeline: "The LLM cleans Indian address text; the geocoder
+   validates reality. We only review approximate or conflicting outcomes."
 
 ## How this wins the criteria
 
@@ -112,5 +147,28 @@ Per region, the doctor gets a 4-part answer, all from existing cleaned columns:
 |---|---|
 | H3 hexbin heatmap, insight layers, specialty selector | **Trust-weighted** coverage (phantom facilities don't fill a hex) |
 | Facility detail popups | Per-claim **verified / unverified / contradicted** + **cited source text** |
-| Static dataset | **Predictive engine** scores newly-crawled facilities |
+| Static dataset | **Golden facility prediction engine** scores newly selected map locations, predicts likely facility attributes, and abstains when evidence is weak |
 | Desert exploration | **Patient-condition profile** per region + **build/verify/refer** recommendation |
+
+## Statistical product guardrails
+
+These guardrails come from the Intuit-style model-risk playbook documented in
+`STATISTICAL_VERIFICATION_STRATEGY.md`:
+
+- Do not call a record `verified`; use `passed checks`, `needs review`, or
+  `contradicted/geography invalid`.
+- Treat missing operational fields as informative missingness, not harmless blanks.
+- Preserve estimated values, intervals, and confidence labels in the UI.
+- Use HFR, PM-JAY, India Post/data.gov, Overture, OSM/Healthsites, geoBoundaries,
+  HMIS/NHSRC, and NFHS as source-agreement or context features according to what
+  each source can actually prove.
+- Use active-learning-style ranking for uncertainty triage, not supervised accuracy.
+- Show Wilson intervals for district rates and empirical intervals for estimated
+  capacity/doctors.
+- Use external evidence as source-agreement features with reason codes, not as
+  automatic truth.
+- Show proxy-score and coverage metrics as part of the product, not just the model.
+- Train supervised models only on a source-corroborated golden dataset. Weak labels
+  can guide review queues, but they cannot support accuracy claims.
+- For map-selected new locations, show confidence, evidence tier, source links, and
+  abstain/review action with every prediction.

@@ -1,0 +1,8 @@
+streamlit>=1.40
+pydeck>=0.9
+h3>=4.0
+pandas>=2.0
+pyarrow>=14.0
+databricks-sql-connector>=3.0   # warehouse reads when DATA_BACKEND=warehouse
+scikit-learn>=1.4               # supervised golden prediction trainer
+joblib>=1.3                     # model artifact serialization

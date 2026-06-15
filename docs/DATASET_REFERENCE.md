@@ -46,15 +46,55 @@ databricks experimental aitools tools query "SELECT ..." --profile 7474647301321
 
 Citation rule for the app: Table 1 is *claimed/derived* (cite per-record `source_urls`); Tables 2 & 3 are *authoritative* (present as ground truth).
 
+## Canonical cleaned tables in Unity Catalog (`workspace.default`)
+
+These are the **single source of truth** for the deployed app (created by the
+cleaning pipeline). The app reads them when `DATA_BACKEND=warehouse`; local dev
+defaults to the CSVs below.
+
+| UC table | Rows |
+|---|---|
+| `workspace.default.hackathon_facility_health_cleaned` | 10,077 |
+| `workspace.default.hackathon_district_health_facility_cleaned` | 494 |
+| `workspace.default.hackathon_pincode_bridge` | — |
+| `workspace.default.hackathon_district_unmatched_pincode_facility_counts` | — |
+| `workspace.default.active_learning_facility_queue` | planned |
+| `workspace.default.active_learning_district_queue` | planned |
+| `workspace.default.trust_uncertainty_model_versions` | planned |
+| `workspace.default.golden_facility_source_matches` | planned |
+| `workspace.default.golden_facility_training_set` | planned |
+| `workspace.default.facility_prediction_features` | planned |
+| `workspace.default.facility_prediction_outputs` | planned |
+| Volume `workspace.default.hackathon_cleaned` | source CSV uploads |
+
+> Cleanup note: an earlier duplicate schema `workspace.vf_hackathon` was removed —
+> use `workspace.default.hackathon_*` only.
+
+### The full data picture (to avoid confusion)
+- **Raw source (read-only Delta share):** `databricks_virtue_foundation_dataset_dais_2026.virtue_foundation_dataset.*`
+- **Cleaned (canonical):** `workspace.default.hackathon_*` (above)
+- **Local dev copies:** `output/data/*.csv`
+
 ## Pre-cleaned assets (already built) — under `output/data/`
 
 | File | Notes |
 |---|---|
 | `district_health_facility_cleaned.csv` (1.3M) | **494 districts.** The app's backbone. See dictionary below. |
 | `district_health_facility_cleaned_data_dictionary.csv` | Column docs for the above. |
-| `facility_health_cleaned.csv` (49M) | Facility-grain join with `join_strategy`/`join_confidence`/`data_readiness_score`/`needs_human_review`/`plausible_geo` — labels for the predictive engine. |
+| `facility_health_cleaned.csv` (49M) | Facility-grain join with `join_strategy`/`join_confidence`/`data_readiness_score`/`needs_human_review`/`plausible_geo` — proxy features for the trust/uncertainty engine. |
 | `facility_health_cleaned_data_dictionary.csv` | Column docs. |
 | `pincode_bridge.csv` (1.6M) | facility PIN → normalized state/district crosswalk. |
+| `semantic_missingness_summary.csv` | Semantic validity and missing/invalid rates for capacity, doctors, year established, recency, and equipment. |
+| `active_learning_facility_queue.csv` | Top 500 active-uncertainty facility rows for source enrichment, stress testing, and cautious UI surfacing. |
+| `active_learning_district_queue.csv` | Top 250 active-uncertainty district rows with rate CIs and decision-fragility signals. |
+| `geo_validation_candidates.csv` | Top geo-invalid/suspicious facility rows for Google/Mappls/API source enrichment, with action, uncertainty bands, and reason codes. |
+| `geocoder_uncertainty_priors.csv` | Transparent priors for how geocoder statuses/location types affect proxy confidence bands. |
+| `golden_facility_source_matches_seed.csv` | Seed source/context rows for the golden facility phase; not training truth. |
+| `golden_facility_training_set_seed.csv` | Bronze/conflict seed labels and evidence tiers; all rows abstain from supervised training until promoted. |
+| `facility_prediction_features_seed.csv` | Initial feature table contract for map-click prediction. |
+| `facility_prediction_outputs_seed.csv` | Rule-baseline prediction outputs with confidence, evidence tier, and abstain reason. |
+| `golden_facility_seed_report.json` | Report-card counts and guardrails for the seed artifacts. |
+| `facility_prediction_model_report.json` | Supervised trainer report: model choice, trained/skipped tasks, metrics, and abstention policy. |
 | `actual_insights_summary.json` | Pre-computed rankings (top care gaps, desert candidates). |
 | `analysis_summary.json`, `cleaned_dataset_audit.json` | Audits. |
 | `raw_*.csv` | Raw extracts of the 3 source tables. |
@@ -80,6 +120,78 @@ real_desert_candidate: 8 · phantom_desert_or_verification_gap: 15 · supply_rec
 - NFHS table has trailing spaces in district names; numeric columns include some strings ("NA") that need casting.
 - Pincode lat/long are strings with literal "NA" for missing.
 - NFHS is district-grain context, never a facility-level fact.
+- Facility operational fields contain semantic missingness: string `"null"`, empty
+  arrays, blank extracted lists, no-evidence text, invalid dates, and unparseable
+  numbers. Use status/confidence/display fields instead of raw values.
+- The cleaned data currently has no human-verified facility label set. Use proxy
+  trust scores, confidence intervals, and active uncertainty ranking rather than
+  claiming measured model accuracy.
+
+## Active uncertainty and proxy trust data
+
+The app should expose active uncertainty queues instead of relying on unavailable
+human labels. These tables are planned in `workspace.default`; local CSVs already
+exist in `output/data/`:
+
+| Table | Purpose |
+|---|---|
+| `active_learning_facility_queue` | Ranked facility rows with active uncertainty score, action, reasons, proxy trust band, capacity/doctor prediction intervals, and source fields. |
+| `active_learning_district_queue` | Ranked district rows with active uncertainty score, action, reasons, Wilson intervals, care/trust gap scores, and sample evidence. |
+| `trust_uncertainty_model_versions` | Optional report card for proxy-score versions: features, score weights, interval policy, sensitivity checks, and limitations. |
+
+These tables turn weak proxy labels into a no-human-label uncertainty loop:
+
+```text
+semantic/proxy trust score -> active uncertainty queue -> source enrichment or
+sensitivity analysis -> updated confidence bands -> safer recommendations
+```
+
+Initial statistical posture:
+
+- Programmatic labels are weak labels, not gold labels.
+- Wilson intervals are appropriate for district rates.
+- Empirical p10-p90 intervals are appropriate for estimated capacity/doctors.
+- Proxy trust bands are triage uncertainty bands, not measured accuracy intervals.
+- Google/Mappls geocoding, HFR/ABDM, PM-JAY, OSM/Overture, and source URLs are
+  source-agreement signals. They reduce uncertainty only when provider metadata,
+  admin geography, pincode, and facility-name checks agree.
+
+## Planned golden facility prediction data
+
+Phase 5 adds supervised learning only after source-corroborated labels exist. The
+target dataset is `workspace.default.golden_facility_training_set`, built by
+conflating cleaned FDR rows with HFR/ABDM, Overture, OSM/Healthsites, India Post,
+government directories, and cited facility sources.
+
+Planned source-tier policy:
+
+| Tier | Meaning |
+|---|---|
+| `gold` | Authoritative registry match or strong independent source agreement. |
+| `silver` | Open-data corroboration but no authoritative registry match. |
+| `bronze` | Weak/FDR-only evidence; keep for active learning, not final training. |
+| `conflict` | Sources disagree; exclude from training and route to review. |
+
+Predictions for new map-selected locations should be written to
+`workspace.default.facility_prediction_outputs` with model version, confidence,
+evidence tier, abstain/review reason, and source links.
+
+## External geocoding explainability data
+
+`geo_validation_candidates.csv` is the bridge between the cleaning work and the
+parallel Google Maps geocoding/API work. It includes:
+
+- `external_validation_action` for the next enrichment step;
+- `external_validation_priority_score` for active API-call triage;
+- `pre_geocode_uncertainty_band_low_km` and `_high_km`;
+- `external_evidence_sources_to_check`;
+- `external_uncertainty_reason_codes`;
+- `geocoder_acceptance_rule`;
+- `google_response_fields_to_store`.
+
+Use it to explain why a coordinate is fragile and what external data would reduce
+uncertainty. Do not convert a geocoder hit into `verified`; convert it into a
+smaller or larger proxy band depending on source agreement.
 
 ## Standout NFHS condition stats (demo hooks)
 - Cervical screening 1.6% mean / breast 0.7% / oral cancer 0.7% — vs men's tobacco 40.6%.

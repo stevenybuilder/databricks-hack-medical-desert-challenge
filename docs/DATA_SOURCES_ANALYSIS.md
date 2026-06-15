@@ -23,22 +23,22 @@ ground truth for geography and need respectively.
 
 ## 2. Source-by-source analysis
 
-### Table 1 — `facilities` (10,088 raw rows × 48 cols → 10,077 cleaned × 102)
+### Table 1 — `facilities` (10,088 raw rows × 48 cols → 10,077 cleaned × 144)
 
 - **11 duplicate `unique_id` rows** in raw; cleaned keeps one row + source occurrence count.
-- **Field coverage** (the "treat noisy fields as claims" reality):
+- **Semantic field coverage** (the "treat noisy fields as claims" reality):
 
-  | Field | Coverage | | Field | Coverage |
-  |---|---|---|---|---|
-  | name | 99.4% | | description | 99.2% |
-  | address_zipOrPostcode | 99.3% | | capability | 98.8% |
-  | latitude / longitude | 98.8% | | procedure | 98.6% |
-  | source_urls | 98.8% | | equipment | 97.8% |
-  | numberDoctors | **36.0%** | | yearEstablished | **47.6%** |
-  | capacity | **25.0%** | | | |
+  | Field | Semantically valid | Missing / invalid |
+  |---|---:|---:|
+  | `capacity` | **24.9%** | 75.1% |
+  | `numberDoctors` | **36.0%** | 64.0% |
+  | `yearEstablished` | **47.3%** | 52.7% |
+  | `recency_of_page_update` | **35.0%** | 65.0% |
+  | `equipment` | 70.5% | 29.5% |
 
-  → Text/claim fields are nearly complete; **structured operational fields
-  (capacity, doctors, year) are sparse** and cannot anchor rankings alone.
+  → Raw fields often looked complete because `"null"`, empty arrays, and no-evidence
+  strings were present. After semantic cleaning, **structured operational fields
+  (capacity, doctors, year, recency) are sparse** and cannot anchor rankings alone.
 
 - **Provenance/trust signals present:** `source_types` (overture/dynamic/constant/kie),
   `source_ids`, `source_urls`, `cluster_id` (merge cluster), plus legitimacy signals
@@ -80,9 +80,10 @@ ground truth for geography and need respectively.
 
 ## 4. Trust & data-readiness analysis
 
-- **Needs human review: 3,029 rows = 30.1%** (95% CI [29.2%, 31.0%]). ~1 in 3 facility
-  records is not safe to use as-is — this is the problem the app exists to surface.
-- **Trustworthy supply: 7,046 rows (69.9%)** — what survives the trust filter.
+- **Needs uncertainty review: 7,812 rows = 77.5%** (95% CI [76.7%, 78.3%]). After
+  semantic missingness handling, most records are not safe to use as-is. This is
+  the problem the app exists to surface and improve.
+- **Trustworthy supply: 4,004 rows (39.7%)** — what survives the stricter trust filter.
 - **Geo quality:**
 
   | Geo class | Rows | Share |
@@ -97,8 +98,8 @@ ground truth for geography and need respectively.
   example in the North Atlantic). Small in count, huge as a demo proof of why
   verification matters. The 928 "far from centroid" rows are the larger silent risk.
 
-- **District uncertainty:** lower 209 · medium 105 · higher 180. ~36% of districts carry
-  *higher* uncertainty — the app must show this, not hide it.
+- **District uncertainty:** lower 4 · medium 275 · higher 215. ~44% of joined districts
+  carry *higher* uncertainty — the app must show this, not hide it.
 
 ---
 
@@ -166,16 +167,56 @@ Takeaways:
 5. **No travel-time or population denominator** → care gaps are proxy scores, not
    definitive access measures.
 
+6. **No human-verified facility label set yet** → current trust scores are
+   evidence/proxy confidence, not measured accuracy. For the hackathon, use
+   confidence intervals, prediction intervals, active uncertainty ranking, and
+   sensitivity analysis rather than claiming calibrated accuracy. The next build
+   phase should create a source-corroborated golden facility dataset before any
+   supervised accuracy claims.
+
+7. **External datasets reduce uncertainty only through agreement** → Google/Mappls
+   geocoder metadata, India Post admin geography, HFR/ABDM, PM-JAY, OSM/Overture,
+   and source URLs should be compared as independent evidence. A single API hit is
+   not a gold label.
+
 ---
 
-## 9. Implications for the build (honor these in the app)
+## 9. Statistical and ML strategy from the Intuit playbook
+
+The relevant ideas from `/Users/stevenyang/Documents/intuit-hackathon` are directly
+applicable here:
+
+| Intuit concept | Why it matters here without human labels | Implementation |
+|---|---|---|
+| Informative missingness | Missing facility capacity/doctors/equipment is not random and may reflect source quality or facility maturity. | Preserve semantic missingness flags as model features. Do not impute without flags. |
+| Selection bias | Weak labels are produced by our own rules, so treating them as truth creates circularity. | Use weak labels only for triage/explanation. Do not report supervised accuracy metrics without ground truth. |
+| Confidence intervals | District rates come from finite observed facility rows. | Show Wilson intervals for review need, trustworthy supply, capacity-observed, doctor-observed, equipment, and recency. |
+| Empirical prediction intervals | Missing numeric fields need ranges, especially with sparse cohorts. | Show p10-p90 cohort intervals for estimated capacity and doctor counts. |
+| Hierarchical shrinkage | Many districts and facility/operator segments are small. | Estimate from narrow cohorts when supported, then broader cohorts, then global fallback. |
+| Active learning | With no oracle, active learning becomes active uncertainty triage. | Queue score = clinical impact + uncertainty + contradiction risk + decision leverage + sparse-segment learning value. |
+| Source-agreement scoring | External sources can narrow bands when they agree and widen bands when they conflict. | Geo candidates carry external validation actions, geocoder priors, reason codes, and pre-geocode uncertainty bands. |
+| Model-risk report card | Judges and users need to see assumptions, not just outputs. | Show proxy-label coverage, missingness, interval widths, active queue yield, and known blind spots. |
+
+Practical interpretation for missing data:
+
+- Use robust cohort imputation for planning values, not truth claims.
+- Keep intervals and confidence fields visible.
+- Run sensitivity analysis: do district recommendations survive pessimistic vs
+  optimistic assumptions about missing supply?
+- Treat unverified as unknown, not false.
+- Do not call proxy trust scores calibrated accuracy without human or authoritative labels.
+
+---
+
+## 10. Implications for the build (honor these in the app)
 
 | Finding | What the app must do |
 |---|---|
-| 30% of facilities need human review | Surface a "to verify" state prominently; never present claims as fact. |
+| 77.5% of facilities need review | Make the Uncertainty Queue a core workflow; never present claims as fact. |
 | `numberDoctors`/`capacity` have impossible maxima (15k, 4k) | Cap/winsorize before aggregating; show median + range, not mean; flag outliers. |
 | Heavy-tailed operational fields | Log-scale visuals; robust percentile stats. |
 | 6 outside-India + 928 far-from-centroid geos | Geo-quality badge per facility; the ocean hospital is the opening demo. |
+| Parallel Google Maps / Mappls geocoding work | Treat provider status, location type, partial-match, place ID, and admin match as explainable uncertainty features. |
 | Confidence intervals exist for every rate | Show CIs / uncertainty bands in the UI (it's a scored criterion). |
 | `planning_category` already computed | Drive build/verify/refer recommendation chips directly from it. |
 | capacity/doctors/year are sparse (25–48%) | Don't rank on them alone; lean on need + trustworthy supply + service signals. |
@@ -183,3 +224,5 @@ Takeaways:
 | No population/travel denominator | Call gap scores "proxies" honestly; (stretch) add WorldPop + distance approx. |
 | Claims must be cited | Wire `sample_source_urls` / `sample_claim_evidence` into every claim shown. |
 | Derived scores are well-behaved | Safe to color the map and rank the leaderboard on `care_gap_score`. |
+| No human-verified labels | Use active uncertainty queues and sensitivity checks; do not claim measured accuracy. |
+| Golden supervised phase planned | Build labels from HFR/authoritative registries plus Overture/OSM/Healthsites/government-directory/source agreement; reserve Google/Mappls for runtime validation unless license review approves durable training use. |
