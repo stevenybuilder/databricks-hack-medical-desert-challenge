@@ -102,6 +102,36 @@ def facility_card(f: dict) -> None:
         st.markdown(f"**Source:** [{url[:80]}]({url})")
     else:
         st.caption("No source URL on record for this facility.")
+
+    st.markdown('<div class="mdn-panel-h">Why this badge?</div>', unsafe_allow_html=True)
+    explain_rows = [
+        {
+            "Signal": "Readiness / semantic quality",
+            "Value": f"{_fmt(f.get('data_readiness_score'))} / {_fmt(f.get('semantic_data_quality_score'))}",
+            "Interpretation": "Automated evidence quality from joins, geography, source URLs, contact evidence, and semantic missingness.",
+        },
+        {
+            "Signal": "Join confidence",
+            "Value": f"{_fmt(f.get('join_confidence'))} · {f.get('join_strategy', 'unknown')}",
+            "Interpretation": f.get("join_uncertainty_reason") or "Facility-to-district context depends on this join.",
+        },
+        {
+            "Signal": "Geo quality",
+            "Value": f"{f.get('geo_quality', 'unknown')} · {_fmt(f.get('geo_distance_km_to_pincode_centroid'), 1)} km from PIN centroid",
+            "Interpretation": "External geocoding should reduce uncertainty only when it agrees with PIN/district/state.",
+        },
+        {
+            "Signal": "Estimated capacity",
+            "Value": f"{_fmt(f.get('capacity_display_value'), 0)} ({_fmt_interval(f.get('capacity_estimate_interval_low'), f.get('capacity_estimate_interval_high'), 0)})",
+            "Interpretation": f"{f.get('capacity_confidence', 'unknown')} confidence; estimated={bool(f.get('capacity_is_estimated', False))}.",
+        },
+        {
+            "Signal": "Estimated doctors",
+            "Value": f"{_fmt(f.get('doctor_count_display_value'), 0)} ({_fmt_interval(f.get('doctor_count_estimate_interval_low'), f.get('doctor_count_estimate_interval_high'), 0)})",
+            "Interpretation": f"{f.get('doctor_count_confidence', 'unknown')} confidence; estimated={bool(f.get('doctor_count_is_estimated', False))}.",
+        },
+    ]
+    st.dataframe(pd.DataFrame(explain_rows), hide_index=True, width="stretch", height=230)
     if status != "Passed checks":
         st.warning("This facility is flagged — verify the claim against the source "
                    "before relying on it.", icon="⚠️")
@@ -112,6 +142,32 @@ def _num(v, default=float("nan")):
         return float(v)
     except (TypeError, ValueError):
         return default
+
+
+def _fmt(v, digits: int = 2) -> str:
+    value = _num(v)
+    return "—" if pd.isna(value) else f"{value:.{digits}f}"
+
+
+def _fmt_interval(low, high, digits: int = 1) -> str:
+    lo = _num(low)
+    hi = _num(high)
+    if pd.isna(lo) or pd.isna(hi):
+        return "unknown"
+    return f"{lo:.{digits}f} to {hi:.{digits}f}"
+
+
+def reason_chips(labels: list[str]) -> None:
+    if not labels:
+        st.caption("No reason codes recorded.")
+        return
+    chips = "".join(
+        f"""<span style="display:inline-block;background:#f8fafc;border:1px solid #dbe5ef;
+        border-radius:999px;padding:.18rem .55rem;margin:.12rem;font-size:.75rem;
+        font-weight:650;color:#334155">{label}</span>"""
+        for label in labels
+    )
+    st.markdown(chips, unsafe_allow_html=True)
 
 
 def region_detail(row: pd.Series, specialty: str) -> None:
@@ -138,6 +194,13 @@ def region_detail(row: pd.Series, specialty: str) -> None:
               help=f"{0 if pd.isna(trust) else int(trust)} of "
                    f"{0 if pd.isna(obs) else int(obs)} observed facilities passed checks")
     c3.metric("Data uncertainty", str(row.get("district_uncertainty_level", "—")).title())
+
+    st.markdown('<div class="mdn-panel-h">Why this recommendation?</div>',
+                unsafe_allow_html=True)
+    explanation, reasons = data.district_explanation(row, specialty)
+    st.dataframe(explanation, hide_index=True, width="stretch", height=285)
+    if not reasons.empty:
+        reason_chips(reasons["Reason"].tolist())
 
     # ---- patient-condition profile (what you'll treat) ----
     _, cond_cols = data.SPECIALTY_DISTRICT.get(specialty, (None, []))
@@ -232,6 +295,116 @@ def verification_detail(row: pd.Series) -> None:
 
     st.caption("Seed labels are bootstrapping labels for a golden set. A Tier A match or "
                "manual call/email outcome should replace the seed before model calibration.")
+
+
+def active_facility_detail(row: pd.Series) -> None:
+    """Explain one row from active_learning_facility_queue.csv."""
+    st.markdown('<div class="mdn-panel-h">Why this facility is fragile</div>',
+                unsafe_allow_html=True)
+    title = str(row.get("facility_name", "Unnamed facility") or "Unnamed facility")
+    subtitle = " · ".join(
+        item for item in [
+            str(row.get("facilityTypeId", "") or "").strip(),
+            str(row.get("district_name", "") or "").strip(),
+            str(row.get("state_ut", "") or "").strip(),
+        ]
+        if item
+    )
+    st.markdown(f"**{title}**")
+    if subtitle:
+        st.caption(subtitle)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Active score", _fmt(row.get("active_uncertainty_score")))
+    m2.metric("Proxy trust", _fmt(row.get("proxy_trust_score")))
+    m3.metric("Geo uncertainty", _fmt(row.get("external_geo_uncertainty_score")))
+    m4.metric("Decision leverage", _fmt(row.get("decision_leverage_score")))
+
+    st.dataframe(data.facility_explanation(row), hide_index=True, width="stretch", height=290)
+    reason_chips(data.reason_labels(row.get("active_learning_reasons")))
+
+    source = data._first_url(row.get("source_urls", ""))
+    if source:
+        st.markdown(f"**Source:** [{source[:90]}]({source})")
+    claim = str(row.get("claim_text", "") or "").strip()
+    if claim:
+        st.markdown(f"**Claimed (unverified):** {claim[:520]}…")
+
+
+def active_district_detail(row: pd.Series, specialty: str) -> None:
+    """Explain one row from active_learning_district_queue.csv."""
+    st.markdown('<div class="mdn-panel-h">Why this district is fragile</div>',
+                unsafe_allow_html=True)
+    title = f"{row.get('district_name', '—')}, {row.get('state_ut', '—')}"
+    st.markdown(f"**{title}**")
+    chip, rec = data.PLANNING.get(str(row.get("planning_category", "")), data.PLANNING["mixed_or_monitor"])
+    st.info(f"{chip}: {rec}", icon="🧭")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Active score", _fmt(row.get("active_uncertainty_score")))
+    m2.metric("Aggregate CI width", _fmt(row.get("aggregate_ci_width")))
+    m3.metric("Observed rows", str(int(_num(row.get("observed_facility_rows"), 0))))
+    m4.metric("Sample uncertainty", _fmt(row.get("sample_size_uncertainty_score")))
+
+    display = pd.DataFrame(
+        [
+            {
+                "Signal": "Need/recommendation",
+                "Value": f"need {_fmt(row.get('health_need_score'))}; care gap {_fmt(row.get('care_gap_score'))}; trust gap {_fmt(row.get('trust_gap_score'))}",
+                "Interpretation": "High values mean the district need is strong and supply evidence is weak.",
+            },
+            {
+                "Signal": "Needs-review rate",
+                "Value": f"{_fmt_interval(row.get('needs_human_review_rate_ci_low'), row.get('needs_human_review_rate_ci_high'))}",
+                "Interpretation": "Wilson interval for rows needing uncertainty review.",
+            },
+            {
+                "Signal": "Critical supply-gap rate",
+                "Value": f"{_fmt_interval(row.get('critical_supply_gap_rate_ci_low'), row.get('critical_supply_gap_rate_ci_high'))}",
+                "Interpretation": "Wilson interval for missing/estimated critical operational evidence.",
+            },
+            {
+                "Signal": "Trustworthy supply rate",
+                "Value": f"{_fmt_interval(row.get('trustworthy_supply_rate_ci_low'), row.get('trustworthy_supply_rate_ci_high'))}",
+                "Interpretation": "Wilson interval for observed rows that passed automated checks.",
+            },
+        ]
+    )
+    st.dataframe(display, hide_index=True, width="stretch", height=235)
+    reason_chips(data.reason_labels(row.get("active_learning_reasons")))
+
+    claim = str(row.get("sample_claim_evidence", "") or "").strip()
+    source = data._first_url(row.get("sample_source_urls", ""))
+    if claim:
+        st.markdown(f"**Sample evidence:** {claim[:460]}…")
+    if source:
+        st.markdown(f"**Source:** [{source[:90]}]({source})")
+
+
+def geo_candidate_detail(row: pd.Series) -> None:
+    """Explain one generated geocoding candidate."""
+    st.markdown('<div class="mdn-panel-h">Geo source-agreement explanation</div>',
+                unsafe_allow_html=True)
+    title = str(row.get("facility_name", "Unnamed facility") or "Unnamed facility")
+    st.markdown(f"**{title}**")
+    st.caption(str(row.get("raw_india_address", "") or row.get("geocoder_query", "")))
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("External priority", _fmt(row.get("external_validation_priority_score")))
+    m2.metric("Geo review score", _fmt(row.get("geo_review_score"), 1))
+    m3.metric("PIN distance km", _fmt(row.get("geo_distance_km_to_pincode_centroid"), 1))
+
+    checks, reasons = data.geo_candidate_explanation(row)
+    st.dataframe(checks, hide_index=True, width="stretch", height=255)
+    if not reasons.empty:
+        reason_chips(reasons["Reason code"].tolist())
+
+    sources = data._json_list(row.get("external_evidence_sources_to_check"))
+    if sources:
+        st.markdown("**External evidence to check:** " + " · ".join(sources))
+    query = str(row.get("geocoder_query", "") or "").strip()
+    if query:
+        st.code(query, language="text")
 
 
 def legend(low_label: str, high_label: str, higher_is_worse: bool) -> None:
