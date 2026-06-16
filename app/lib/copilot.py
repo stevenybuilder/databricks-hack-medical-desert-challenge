@@ -101,6 +101,53 @@ def _district_by_label(districts: pd.DataFrame, label: str) -> pd.Series | None:
 
 # ---- agentic modes -------------------------------------------------------------
 
+def _gap_is_real(row) -> str:
+    """Honest 'is the care gap genuinely there?' tier — NOT a supply-data score.
+
+    For a real-desert candidate the gap is evidenced by the NEED side (NFHS) plus
+    the *absence* of trustworthy supply. A zero-facility desert with a fully
+    measured NFHS survey is the strongest case — the absence of facilities IS the
+    signal — so it reads High, never 0.00. Derived only from columns that exist:
+      • planning_category == real_desert_candidate (need + low supply already met)
+      • health_need_score (NFHS burden percentile)
+      • NFHS survey coverage (households_surveyed) — is the need well-measured?
+    """
+    need = pd.to_numeric(row.get("health_need_score"), errors="coerce")
+    hh = pd.to_numeric(row.get("households_surveyed"), errors="coerce")
+    is_real = str(row.get("planning_category", "")) == "real_desert_candidate"
+    well_measured = pd.notna(hh) and hh >= 500  # NFHS district fact-sheet coverage
+    need_v = 0.0 if pd.isna(need) else float(need)
+    if is_real and need_v >= 0.6 and well_measured:
+        return "High"
+    if is_real and need_v >= 0.45 and well_measured:
+        return "Medium-High"
+    if need_v >= 0.5:
+        return "Medium"
+    return "Low"
+
+
+def _supply_evidence(row) -> str:
+    """Honest 'how much trustworthy facility evidence backs the supply side?'.
+
+    A zero-facility desert has NONE — and that is the point, so we say so plainly
+    instead of rendering 0.00. Otherwise we report the trustworthy-supply rate
+    over the (small) observed sample as an Observed/Estimated tier.
+    Columns: zero_facility_desert, observed_facility_rows, trustworthy_supply_rate.
+    """
+    if bool(row.get("zero_facility_desert", False)):
+        return "None — no facilities on record"
+    obs = pd.to_numeric(row.get("observed_facility_rows"), errors="coerce")
+    obs_n = 0 if pd.isna(obs) else int(obs)
+    if obs_n == 0:
+        return "None — no facilities on record"
+    tsr = pd.to_numeric(row.get("trustworthy_supply_rate"), errors="coerce")
+    tsr_v = 0.0 if pd.isna(tsr) else float(tsr)
+    n_word = f"{obs_n} record" + ("s" if obs_n != 1 else "")
+    if obs_n < 8:
+        return f"Thin — {n_word}, {tsr_v*100:.0f}% trustworthy"
+    return f"Observed — {n_word}, {tsr_v*100:.0f}% trustworthy"
+
+
 def _mode_verifiable_deserts(facilities, districts, specialty):
     real = districts[districts["planning_category"] == "real_desert_candidate"]
     datapoor = districts[districts["planning_category"].isin(
@@ -109,17 +156,50 @@ def _mode_verifiable_deserts(facilities, districts, specialty):
                 f"trustworthy supply, and enough evidence to believe the gap is real. "
                 f"**{len(datapoor)} more look like gaps but are data-poor** — verify before acting.")
     st.altair_chart(charts.desert_quadrant(districts), use_container_width=True)
-    st.caption("Top-right = high gap **and** well-evidenced (act now). "
-               "Top-left = high gap but low confidence (verify first). Dashed lines: gap 0.6 / confidence 0.5.")
+    # Wordy methodology moved behind a disclosure so the first glance stays calm (E6).
+    with ui.detail("How to read this quadrant"):
+        st.caption("Top-right = high gap **and** well-evidenced (act now). "
+                   "Top-left = high gap but low confidence (verify first). "
+                   "Dashed lines: gap 0.6 / confidence 0.5.")
+
     top = real.sort_values("care_gap_score", ascending=False).head(8)
+    # Two HONEST signals instead of one misleading 0.00 "Confidence":
+    #   • "Gap is real" — confidence the care gap genuinely exists (need-evidenced).
+    #     For zero-facility deserts this is High: the absence of facilities IS the
+    #     signal, and the NFHS need is fully measured.
+    #   • "Supply evidence" — how much trustworthy facility evidence exists. For a
+    #     zero-facility desert: an honest "None — no facilities" chip, never a number.
     show = pd.DataFrame({
-        "District": top["district_name"] + ", " + top["state_ut"],
-        "Care gap": pd.to_numeric(top["care_gap_score"], errors="coerce").round(2),
-        "Confidence": pd.to_numeric(top["district_data_quality_score"], errors="coerce").round(2),
-        "Zero-facility": top.get("zero_facility_desert", False),
+        "District": (top["district_name"] + ", " + top["state_ut"]).values,
+        "Care gap": pd.to_numeric(top["care_gap_score"], errors="coerce").round(2).values,
+        "Gap is real": [_gap_is_real(r) for _, r in top.iterrows()],
+        "Supply evidence": [_supply_evidence(r) for _, r in top.iterrows()],
+        "Next step": ["Verify on ground" if bool(r.get("zero_facility_desert", False))
+                      else "Confirm the few records" for _, r in top.iterrows()],
     })
     st.markdown("**Top verifiable deserts to act on:**")
-    st.dataframe(show, hide_index=True, width="stretch")
+    st.dataframe(
+        show, hide_index=True, width="stretch",
+        column_config={
+            "Care gap": st.column_config.NumberColumn(
+                "Care gap", format="%.2f",
+                help="0–1 composite: NFHS need + supply scarcity + low trustworthy supply."),
+            "Gap is real": st.column_config.TextColumn(
+                "Gap is real",
+                help="Confidence the care gap genuinely exists — evidenced by NFHS "
+                     "need and the absence of trustworthy supply. For a zero-facility "
+                     "desert this is High: the absence of facilities IS the signal."),
+            "Supply evidence": st.column_config.TextColumn(
+                "Supply evidence", width="medium",
+                help="How much trustworthy facility evidence backs the supply side. "
+                     "Zero-facility deserts have none on record — that is the gap, "
+                     "not a low-confidence score."),
+        },
+    )
+    st.caption("Two honest signals, not one number: **Gap is real** is need-evidenced "
+               "(NFHS); **Supply evidence** says how much trustworthy facility data exists. "
+               "A zero-facility desert is *High* gap-confidence with *no* supply evidence — "
+               "the absence of facilities is the signal, so verify on the ground.")
 
 
 def _mode_drill_conditions(facilities, districts, specialty):

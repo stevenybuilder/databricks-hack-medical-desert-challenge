@@ -19,6 +19,7 @@ persistence is session-only.
 """
 from __future__ import annotations
 
+import html
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -655,6 +656,130 @@ def list_scenarios(geography_id: Optional[str] = None) -> pd.DataFrame:
     if "created_at" in out:
         out = out.sort_values("created_at", ascending=False)
     return out.reset_index(drop=True)
+
+
+# ===========================================================================
+# Reusable "My Plan" surface (frosted, minimal) — makes persistence VISIBLE
+# ===========================================================================
+#
+# The brief REQUIRES persisting user actions, and we do (SQLite locally / Delta
+# in warehouse). This helper renders that persistence as a tidy, design-system
+# styled panel any tab can drop in: a "Persisted to <backend> ✓" badge driven by
+# ``persistence_status()``, the shortlisted geographies, and saved notes. It is
+# best-effort and never raises.
+
+
+def _plan_badge(status: dict) -> None:
+    """A clear 'Persisted to <backend> ✓' frosted badge driven by status.
+
+    Tone tracks durability: durable warehouse/sqlite reads as good (teal ✓);
+    session-only or a failed Delta write reads as caution (amber)."""
+    backend = str(status.get("backend", "session"))
+    durable = bool(status.get("durable", False))
+    detail = str(status.get("detail", ""))
+    label_backend = {
+        "warehouse": "governed Delta",
+        "sqlite": "SQLite",
+        "session": "session-only",
+    }.get(backend, backend)
+    if durable:
+        accent, glyph, text_color = "rgba(46,204,193,.45)", "✓", "#9af2e8"
+        verb = "Persisted to"
+    else:
+        accent, glyph, text_color = "rgba(255,190,72,.45)", "•", "#ffd58a"
+        verb = "Session-only —"
+    st.markdown(
+        f'<div class="mdn-glass" style="margin:.1rem 0 .45rem;padding:.7rem 1rem;'
+        f'border-color:{accent};display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">'
+        f'<span style="display:inline-flex;align-items:center;gap:.4rem;'
+        f'background:rgba(12,22,38,.85);border:1px solid {accent};border-radius:999px;'
+        f'padding:.26rem .8rem;font-size:.8rem;font-weight:750;color:{text_color};'
+        f'white-space:nowrap">{glyph} {verb} {html.escape(label_backend)}</span>'
+        f'<span style="color:var(--muted);font-size:.78rem;line-height:1.4;flex:1 1 14rem">'
+        f'{html.escape(detail)}</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _plan_pills(items: List[str]) -> None:
+    """Render labels as frosted pill chips (matches ``ui.reason_chips`` styling)."""
+    if not items:
+        return
+    chips = "".join(
+        f'<span style="display:inline-block;background:rgba(12,22,38,.95);'
+        f'border:1px solid rgba(148,163,184,.26);border-radius:999px;padding:.2rem .65rem;'
+        f'margin:.14rem;font-size:.78rem;font-weight:650;color:#c9d8ea">'
+        f'{html.escape(str(label))}</span>'
+        for label in items
+    )
+    st.markdown(chips, unsafe_allow_html=True)
+
+
+def render_my_plan(*, hint: bool = True) -> dict:
+    """Render the visible "My Plan" persistence surface and return the status dict.
+
+    Shows the persisted backend badge, the shortlisted geographies as pills + a
+    compact table, and any saved notes. Graceful on an empty plan. Never raises;
+    reusable from any tab (``tab_gaps`` calls it as a segmented sub-view)."""
+    _safe_init()
+    try:
+        status = persistence_status()
+    except Exception:
+        status = {"backend": "session", "durable": False, "detail": ""}
+
+    _plan_badge(status)
+    if hint:
+        backend_word = {
+            "warehouse": "governed Delta tables",
+            "sqlite": "local SQLite",
+            "session": "session memory (read-only filesystem)",
+        }.get(str(status.get("backend", "session")), str(status.get("backend")))
+        st.caption(
+            f"Saved actions survive reload — persisted to {backend_word}. "
+            "Shortlist a district, reload the page, and it is still here."
+        )
+
+    # ---- Shortlisted districts ------------------------------------------
+    try:
+        sl = list_shortlist()
+    except Exception:
+        sl = pd.DataFrame()
+    ui.panel_header("Shortlisted districts")
+    if sl is None or sl.empty:
+        st.caption("No districts shortlisted yet — add one from the ranking.")
+    else:
+        sl = sl.copy()
+        labels = [str(x) for x in sl.get("facility_name", pd.Series(dtype=str)).fillna("")
+                  if str(x).strip()]
+        if not labels:
+            labels = [str(x) for x in sl.get("unique_id", pd.Series(dtype=str)).fillna("")
+                      if str(x).strip()]
+        _plan_pills(labels)
+        show = pd.DataFrame({
+            "District": sl.get("facility_name", "").astype(str)
+            if "facility_name" in sl else sl.get("unique_id", "").astype(str),
+            "Reason": sl.get("reason", "").astype(str) if "reason" in sl else "",
+            "Saved at": sl.get("created_at", "").astype(str) if "created_at" in sl else "",
+        })
+        st.dataframe(show, hide_index=True, width="stretch")
+
+    # ---- Saved notes ----------------------------------------------------
+    try:
+        notes = list_notes(None)
+    except Exception:
+        notes = pd.DataFrame()
+    ui.panel_header("Saved notes")
+    if notes is None or notes.empty:
+        st.caption("No notes saved yet — add a quick note on a district below.")
+    else:
+        show = pd.DataFrame({
+            "District": notes.get("geography_id", "").astype(str),
+            "Note": notes.get("note", "").astype(str),
+            "Saved at": notes.get("created_at", "").astype(str),
+        })
+        st.dataframe(show, hide_index=True, width="stretch", height=200)
+
+    return status
 
 
 # ---------------------------------------------------------------------------

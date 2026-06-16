@@ -242,6 +242,129 @@ hr {border-color: var(--mdn-line);}
   backdrop-filter: blur(16px) saturate(130%);
   color: var(--mdn-text);
 }
+/* ===== .mdn-tip — Tableau-style hover tooltip (E6, pure CSS) =====
+   Reusable hover-disclosure for custom markup: put `class="mdn-tip"` on any
+   inline element and a `data-tip="…"` attribute with the tooltip text. On
+   hover/focus a frosted floating tooltip (--glass tokens + --shadow-float)
+   fades in above the element. Keeps wordy captions off the first glance.
+   Usage:
+     <span class="mdn-tip" data-tip="Estimated from regional medians.">capacity</span>
+   The element should be focusable (the cell/row usually is); add tabindex="0"
+   on a bare <span> if you want keyboard reveal. Lightweight, no JS. */
+.mdn-tip {
+  position: relative;
+  cursor: help;
+  border-bottom: 1px dashed var(--mdn-line-strong);
+}
+.mdn-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(4px);
+  width: max-content;
+  max-width: 260px;
+  white-space: normal;
+  text-align: left;
+  font-family: var(--mdn-font);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--mdn-text);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-float);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  padding: .5rem .65rem;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 60;
+  transition: opacity .14s ease, transform .14s ease;
+}
+.mdn-tip:hover::after,
+.mdn-tip:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+/* ===== Facility decision card (E5) — clean labeled key/value detail ===== */
+.mdn-fac-head { margin-top: .5rem; padding: .9rem 1rem; }
+.mdn-fac-title {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  flex-wrap: wrap;
+}
+.mdn-fac-name {
+  font-size: var(--fs-h2);
+  font-weight: 740;
+  letter-spacing: -.01em;
+  color: var(--mdn-text);
+}
+.mdn-fac-badge {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  padding: .2rem .6rem;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+.mdn-fac-sub {
+  font-size: var(--fs-body);
+  color: var(--mdn-muted);
+  margin-top: .3rem;
+}
+.mdn-fact-list {
+  margin: .55rem 0 .2rem;
+  display: flex;
+  flex-direction: column;
+  gap: .1rem;
+}
+.mdn-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .42rem .15rem;
+  border-bottom: 1px solid var(--mdn-line);
+}
+.mdn-fact:last-child { border-bottom: none; }
+.mdn-fact-k {
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--mdn-muted);
+  flex: 0 0 auto;
+}
+.mdn-fact-v {
+  font-size: var(--fs-body);
+  font-weight: 620;
+  color: var(--mdn-text);
+  text-align: right;
+  font-feature-settings: var(--mdn-tnum);
+}
+/* The cited claim, treated as first-class evidence (quote style). */
+.mdn-claim {
+  margin: .7rem 0 .35rem;
+  padding: .65rem .85rem;
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg-soft);
+  color: var(--mdn-text);
+  font-size: var(--fs-body);
+  font-style: italic;
+  line-height: 1.4;
+}
+.mdn-claim-tag {
+  display: block;
+  margin-top: .4rem;
+  font-style: normal;
+  font-size: var(--fs-caption);
+  font-weight: 650;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--mid);
+}
 
 .mdn-card {
   position: relative;
@@ -674,6 +797,9 @@ def inject_css() -> None:
 
 
 def header() -> None:
+    # E4: one concise line. The redundant "evidence-weighted / uncertainty
+    # visible" chip (restated again in the old orbit-note + nav-caption) was
+    # folded away — the single tagline carries the idea once.
     st.markdown(
         f"""
         <div class="mdn-topbar">
@@ -682,7 +808,6 @@ def header() -> None:
             <div class="mdn-title">{config.APP_TITLE}</div>
             <div class="mdn-sub">{config.APP_TAGLINE}</div>
           </div>
-          <div class="mdn-chip">India · evidence-weighted planning · uncertainty visible</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -812,72 +937,161 @@ _BADGE = {
 }
 
 
+def _source_domain(url: str) -> str:
+    """Parse a clean, human-readable domain from a source URL.
+
+    Never returns a raw 80-char URL — strips scheme, ``www.``, path/query, and
+    falls back to the trimmed host. Returns "" if no usable host is present.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    host = raw.split("://", 1)[-1]          # drop scheme
+    host = host.split("/", 1)[0]            # drop path
+    host = host.split("?", 1)[0].split("#", 1)[0]
+    host = host.split("@", 1)[-1]           # drop credentials
+    host = host.split(":", 1)[0]            # drop port
+    if host.lower().startswith("www."):
+        host = host[4:]
+    return host.strip().lower()
+
+
+def _stat_line(label: str, value: str, tip: str = "") -> str:
+    """One labeled key-value line (one fact per line) for the facility card."""
+    tip_attr = (
+        f' data-tip="{html.escape(tip, quote=True)}"' if tip else ""
+    )
+    tip_cls = " mdn-tip" if tip else ""
+    return (
+        '<div class="mdn-fact">'
+        f'<span class="mdn-fact-k{tip_cls}"{tip_attr}>{html.escape(label)}</span>'
+        f'<span class="mdn-fact-v">{html.escape(value)}</span>'
+        '</div>'
+    )
+
+
 def facility_card(f: dict) -> None:
-    """Render a clicked facility's detail with status badge and cited source."""
-    status = f.get("status", "Unknown")
+    """Clean, labeled decision card for a clicked facility (E5).
+
+    Status badge + one-fact-per-line key/value rows + a first-class cited claim
+    (quote style) with a clean ``Source: <domain>`` link. The raw signal table
+    is demoted behind a "Why this badge?" expander.
+    """
+    status = f.get("status", "Unknown") or "Unknown"
     fg, bg = _BADGE.get(status, _BADGE["Unknown"])
-    name = f.get("facility_name", "Unnamed facility")
-    loc = " · ".join(x for x in [f.get("city"), f.get("district"), f.get("state")]
-                     if x and x != "—")
+    name = str(f.get("facility_name") or "Unnamed facility")
+    loc = " · ".join(
+        x for x in [f.get("city"), f.get("district"), f.get("state")]
+        if x and str(x) != "—"
+    )
+    ftype = str(f.get("facility_type") or "—")
     url = (f.get("source_url") or "").strip()
+    domain = _source_domain(url)
     evidence = (f.get("evidence") or "").strip()
 
+    # ---- Header: name + status badge + a quiet type/location line ----
+    sub = " · ".join(x for x in [ftype, loc] if x and x != "—") or "—"
     st.markdown(
         f"""
-        <div style="border:1px solid rgba(148,174,214,.16);border-radius:12px;padding:.9rem 1rem;
-             margin-top:.6rem;background:linear-gradient(180deg,rgba(13,24,42,.6),rgba(8,15,26,.48));
-             box-shadow:0 10px 30px rgba(0,0,0,.28);backdrop-filter:blur(14px)">
-          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
-            <span style="font-size:1.05rem;font-weight:700;color:#eaf2ff">{name}</span>
-            <span style="background:{bg};color:{fg};font-size:.72rem;font-weight:700;
-                  padding:.2rem .6rem;border-radius:999px">{status}</span>
+        <div class="mdn-glass mdn-fac-head">
+          <div class="mdn-fac-title">
+            <span class="mdn-fac-name">{html.escape(name)}</span>
+            <span class="mdn-fac-badge" style="background:{bg};color:{fg}">{html.escape(str(status))}</span>
           </div>
-          <div style="font-size:.83rem;color:#93a4b8;margin-top:.25rem">
-            {f.get('facility_type','—')} · {loc or '—'} · geo: {f.get('geo_quality','—')}
-          </div>
+          <div class="mdn-fac-sub">{html.escape(sub)}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    # ---- Clean, labeled facts: ONE human-readable fact per line ----
+    cap_v = _fmt(f.get("capacity_display_value"), 0)
+    cap_iv = _fmt_interval(f.get("capacity_estimate_interval_low"),
+                           f.get("capacity_estimate_interval_high"), 0)
+    cap_conf = str(f.get("capacity_confidence") or "unknown")
+    doc_v = _fmt(f.get("doctor_count_display_value"), 0)
+    doc_iv = _fmt_interval(f.get("doctor_count_estimate_interval_low"),
+                           f.get("doctor_count_estimate_interval_high"), 0)
+    doc_conf = str(f.get("doctor_count_confidence") or "unknown")
+    geo_q = str(f.get("geo_quality") or "unknown")
+    geo_km = _fmt(f.get("geo_distance_km_to_pincode_centroid"), 1)
+    trust = ("Passes supply checks" if status == "Passed checks"
+             else "Flagged — verify before relying")
+
+    facts: list[str] = []
+    if cap_v != "—":
+        iv = f" ({cap_iv})" if cap_iv != "unknown" else ""
+        facts.append(_stat_line(
+            "Estimated capacity", f"{cap_v} beds{iv}, {cap_conf} confidence",
+            tip="Estimated when the source omits a bed count; the interval is the "
+                "plausible range, not a precise figure.",
+        ))
+    if doc_v != "—":
+        iv = f" ({doc_iv})" if doc_iv != "unknown" else ""
+        facts.append(_stat_line(
+            "Doctors", f"{doc_v}{iv}, {doc_conf} confidence",
+            tip="Estimated doctor count with its plausible range.",
+        ))
+    facts.append(_stat_line(
+        "Trust", trust,
+        tip="Whether the facility passes the automated supply/evidence checks.",
+    ))
+    geo_v = geo_q if geo_km == "—" else f"{geo_q} ({geo_km} km from PIN centroid)"
+    facts.append(_stat_line(
+        "Geo quality", geo_v,
+        tip="How well external geocoding agrees with the PIN / district / state.",
+    ))
+    st.markdown(
+        '<div class="mdn-fact-list">' + "".join(facts) + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ---- Cited claim (first-class, quote style) + clean source link ----
     if evidence:
-        st.markdown(f"**Claimed (unverified):** {evidence}…")
-    if url:
-        st.markdown(f"**Source:** [{url[:80]}]({url})")
+        st.markdown(
+            f'<blockquote class="mdn-claim">{html.escape(evidence)}'
+            '<span class="mdn-claim-tag">claimed · unverified</span></blockquote>',
+            unsafe_allow_html=True,
+        )
+    if domain:
+        st.markdown(f"Source: [{domain}]({url})")
     else:
         st.caption("No source URL on record for this facility.")
 
-    st.markdown('<div class="mdn-panel-h">Why this badge?</div>', unsafe_allow_html=True)
-    explain_rows = [
-        {
-            "Signal": "Readiness / semantic quality",
-            "Value": f"{_fmt(f.get('data_readiness_score'))} / {_fmt(f.get('semantic_data_quality_score'))}",
-            "Interpretation": "Automated evidence quality from joins, geography, source URLs, contact evidence, and semantic missingness.",
-        },
-        {
-            "Signal": "Join confidence",
-            "Value": f"{_fmt(f.get('join_confidence'))} · {f.get('join_strategy', 'unknown')}",
-            "Interpretation": f.get("join_uncertainty_reason") or "Facility-to-district context depends on this join.",
-        },
-        {
-            "Signal": "Geo quality",
-            "Value": f"{f.get('geo_quality', 'unknown')} · {_fmt(f.get('geo_distance_km_to_pincode_centroid'), 1)} km from PIN centroid",
-            "Interpretation": "External geocoding should reduce uncertainty only when it agrees with PIN/district/state.",
-        },
-        {
-            "Signal": "Estimated capacity",
-            "Value": f"{_fmt(f.get('capacity_display_value'), 0)} ({_fmt_interval(f.get('capacity_estimate_interval_low'), f.get('capacity_estimate_interval_high'), 0)})",
-            "Interpretation": f"{f.get('capacity_confidence', 'unknown')} confidence; estimated={bool(f.get('capacity_is_estimated', False))}.",
-        },
-        {
-            "Signal": "Estimated doctors",
-            "Value": f"{_fmt(f.get('doctor_count_display_value'), 0)} ({_fmt_interval(f.get('doctor_count_estimate_interval_low'), f.get('doctor_count_estimate_interval_high'), 0)})",
-            "Interpretation": f"{f.get('doctor_count_confidence', 'unknown')} confidence; estimated={bool(f.get('doctor_count_is_estimated', False))}.",
-        },
-    ]
-    st.dataframe(pd.DataFrame(explain_rows), hide_index=True, width="stretch", height=230)
     if status != "Passed checks":
         st.warning("This facility is flagged — verify the claim against the source "
                    "before relying on it.")
+
+    # ---- Raw signals demoted behind an expander (off the first glance) ----
+    with detail("Why this badge?"):
+        explain_rows = [
+            {
+                "Signal": "Readiness / semantic quality",
+                "Value": f"{_fmt(f.get('data_readiness_score'))} / {_fmt(f.get('semantic_data_quality_score'))}",
+                "Interpretation": "Automated evidence quality from joins, geography, source URLs, contact evidence, and semantic missingness.",
+            },
+            {
+                "Signal": "Join confidence",
+                "Value": f"{_fmt(f.get('join_confidence'))} · {f.get('join_strategy', 'unknown')}",
+                "Interpretation": f.get("join_uncertainty_reason") or "Facility-to-district context depends on this join.",
+            },
+            {
+                "Signal": "Geo quality",
+                "Value": f"{geo_q} · {geo_km} km from PIN centroid",
+                "Interpretation": "External geocoding should reduce uncertainty only when it agrees with PIN/district/state.",
+            },
+            {
+                "Signal": "Estimated capacity",
+                "Value": f"{cap_v} ({cap_iv})",
+                "Interpretation": f"{cap_conf} confidence; estimated={bool(f.get('capacity_is_estimated', False))}.",
+            },
+            {
+                "Signal": "Estimated doctors",
+                "Value": f"{doc_v} ({doc_iv})",
+                "Interpretation": f"{doc_conf} confidence; estimated={bool(f.get('doctor_count_is_estimated', False))}.",
+            },
+        ]
+        st.dataframe(pd.DataFrame(explain_rows), hide_index=True, width="stretch", height=230)
 
 
 def _num(v, default=float("nan")):

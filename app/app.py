@@ -150,20 +150,14 @@ def main() -> None:
     districts = _districts()
     ui.header()
 
-    lens_col, note_col = st.columns([1.05, 3.2], gap="medium")
+    # E4: header collapsed to one line. The redundant orbit-note bubble and the
+    # "Plan · Map · …" nav-caption were removed (the segmented control already
+    # labels the tabs) so the map / wow-stat sit near the top. Only the
+    # specialty lens remains.
+    lens_col, _ = st.columns([1.05, 3.2], gap="medium")
     with lens_col:
         specialty = st.selectbox("Filter by service (optional)", list(config.SPECIALTIES.keys()), index=0)
-    with note_col:
-        st.markdown(
-            '<div class="mdn-orbit-note">NFHS health need, facility supply, source evidence, '
-            'geocoding quality, and uncertainty intervals are surfaced together for planning.</div>',
-            unsafe_allow_html=True,
-        )
 
-    st.markdown(
-        '<div class="mdn-nav-caption">Plan · Map · Top care gaps · Copilot</div>',
-        unsafe_allow_html=True,
-    )
     primary_view = st.segmented_control(
         "Primary view",
         ["Map", "Top care gaps", "Copilot"],

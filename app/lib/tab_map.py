@@ -2,14 +2,16 @@
 
 Entry point: ``render(facilities, districts, specialty) -> None``.
 
-Layout standard (see DESIGN_SYSTEM.md — VFMatch-style split hero): a LEFT frosted
-orientation/action card (title + ≤2 KPIs + real pill actions) sits beside the
-pydeck map as the CENTERPIECE filling the right column, with a small FLOATING
-legend chip (``.mdn-float`` via ``ui.floating_card``) reading as an overlay on the
-map. All dense controls (view mode, basemap, H3 resolution, toggles), the coverage
-snapshot, the full leaderboard, and the methodology note live behind
-``ui.detail(...)`` expanders — depth is opt-in, never forced. First glance =
-hero card + map + floating legend + selected-district detail.
+Layout standard (see DESIGN_SYSTEM.md — VFMatch-style composition): a LEFT frosted
+DISTRICT RAIL (search + 2 compact KPIs + a scrollable, ranked care-gap list with
+tone-coded action pills) sits beside the pydeck map as the CENTERPIECE filling the
+right column, with a small FLOATING legend chip (``.mdn-float`` via
+``ui.floating_card``) reading as an overlay on the map. Selecting a rail row drives
+the SAME selection state as a map click — it recenters the map AND updates the
+detail panel below. All dense controls (view mode, basemap, H3 resolution, toggles),
+the coverage snapshot, and the methodology note live behind ``ui.detail(...)``
+expanders — depth is opt-in, never forced. First glance = district rail + map +
+floating legend + selected-district detail.
 """
 from __future__ import annotations
 
@@ -48,8 +50,122 @@ def _desert_count(districts: pd.DataFrame) -> int:
                .fillna(False).astype(bool).sum())
 
 
-def _map_kpis(districts: pd.DataFrame) -> None:
-    """≤2 decision-relevant KPIs: the worst care-gap district + zero-facility deserts."""
+# --- E2: robust centroid resolution (NaN-safe) -------------------------------
+
+# A sensible nationwide fallback so a jump ALWAYS lands somewhere usable.
+_INDIA_FALLBACK = (float(config.INDIA_VIEW["latitude"]),
+                   float(config.INDIA_VIEW["longitude"]))
+
+
+def _district_centroid(row, districts: pd.DataFrame, facilities: pd.DataFrame,
+                       resolution: int = 4) -> tuple[float, float]:
+    """Resolve a usable (lat, lon) for a district even when its centroid is NaN.
+
+    73/706 districts (incl. the #1 care-gap district, Uttar Dinajpur WB) have NaN
+    ``district_latitude/longitude``. This walks a fallback chain so ``map_focus_view``
+    is ALWAYS set and the map visibly recenters:
+
+      1. the district's own centroid (when present);
+      2. the mean lat/lon of that district's hex cells (``data.district_hexes``);
+      3. the mean of that district's mapped facility coordinates;
+      4. the mean centroid of its STATE's districts (state-level fallback);
+      5. the nationwide India centroid (last resort).
+    """
+    if row is None:
+        return _INDIA_FALLBACK
+    name = row.get("district_name")
+    state = row.get("state_ut")
+
+    # 1) the district's own centroid.
+    lat = pd.to_numeric(row.get("district_latitude"), errors="coerce")
+    lon = pd.to_numeric(row.get("district_longitude"), errors="coerce")
+    if pd.notna(lat) and pd.notna(lon):
+        return float(lat), float(lon)
+
+    # 2) mean of this district's hex cells (carry lat/lon for the matching rows).
+    try:
+        hexes = data.district_hexes(districts, resolution)
+        if hexes is not None and not hexes.empty and {"lat", "lon"} <= set(hexes.columns):
+            sub = hexes[(hexes.get("district_name") == name)
+                        & (hexes.get("state_ut") == state)]
+            la = pd.to_numeric(sub.get("lat"), errors="coerce").dropna()
+            lo = pd.to_numeric(sub.get("lon"), errors="coerce").dropna()
+            if not la.empty and not lo.empty:
+                return float(la.mean()), float(lo.mean())
+    except Exception:
+        pass
+
+    # 3) mean of this district's mapped facility coordinates.
+    try:
+        if facilities is not None and not facilities.empty:
+            fsub = facilities[(facilities.get("district_name") == name)
+                              & (facilities.get("state_ut") == state)]
+            fla = pd.to_numeric(fsub.get("facility_latitude"), errors="coerce").dropna()
+            flo = pd.to_numeric(fsub.get("facility_longitude"), errors="coerce").dropna()
+            if not fla.empty and not flo.empty:
+                return float(fla.mean()), float(flo.mean())
+    except Exception:
+        pass
+
+    # 4) state-level fallback: mean centroid of the state's districts.
+    try:
+        if districts is not None and not districts.empty and state is not None:
+            ssub = districts[districts.get("state_ut") == state]
+            sla = pd.to_numeric(ssub.get("district_latitude"), errors="coerce").dropna()
+            slo = pd.to_numeric(ssub.get("district_longitude"), errors="coerce").dropna()
+            if not sla.empty and not slo.empty:
+                return float(sla.mean()), float(slo.mean())
+    except Exception:
+        pass
+
+    # 5) nationwide last resort — never leaves the focus view unset.
+    return _INDIA_FALLBACK
+
+
+def _focus_on(row, districts: pd.DataFrame, facilities: pd.DataFrame,
+              zoom: float = 6.2) -> None:
+    """Set the persistent focus-geo + one-shot focus-view for a chosen district.
+
+    ``map_focus_geo`` is PERSISTENT (drives the detail panel + the "Now viewing"
+    confirmation until another selection replaces it). ``map_focus_view`` is the
+    one-shot recenter, consumed only when actually applied to the ViewState — so a
+    stray map ``on_select`` rerun cannot swallow a pending jump.
+    """
+    if row is None:
+        return
+    st.session_state["map_focus_geo"] = {
+        "district_name": row.get("district_name"),
+        "state_ut": row.get("state_ut"),
+    }
+    lat, lon = _district_centroid(row, districts, facilities)
+    st.session_state["map_focus_view"] = {
+        "latitude": float(lat), "longitude": float(lon), "zoom": float(zoom)}
+
+
+def _now_viewing_chip(districts: pd.DataFrame) -> None:
+    """Small visible confirmation that a jump/selection is active in the hero."""
+    geo = st.session_state.get("map_focus_geo")
+    if not geo:
+        return
+    name = geo.get("district_name") or "unknown"
+    state = geo.get("state_ut") or ""
+    label = f"{html.escape(str(name))}, {html.escape(str(state))}" if state else html.escape(str(name))
+    st.markdown(
+        '<div style="display:inline-flex;align-items:center;gap:.4rem;'
+        'margin:.1rem 0 .55rem;padding:.22rem .6rem;border-radius:var(--radius-pill);'
+        'background:rgba(46,204,193,.14);border:1px solid rgba(46,204,193,.34);'
+        'font-size:.72rem;font-weight:640;color:var(--text)">'
+        '<span style="color:var(--good)">◎</span>'
+        f'<span style="color:var(--mdn-muted);font-weight:600">Now viewing</span>'
+        f'<span>{label}</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# --- E3: left district rail ---------------------------------------------------
+
+def _rail_kpis(districts: pd.DataFrame) -> None:
+    """≤2 decision-relevant KPIs kept compact above the list."""
     worst = _worst_district(districts)
     items: list[tuple[str, str, str]] = []
     tones: list[str] = []
@@ -59,70 +175,102 @@ def _map_kpis(districts: pd.DataFrame) -> None:
             "Worst care gap",
             name,
             f"{_action_label(worst.get('planning_category'))} · "
-            f"care-gap score {_fmt_num(worst.get('care_gap_score'))}",
+            f"score {_fmt_num(worst.get('care_gap_score'))}",
         ))
         tones.append(_action_tone(worst.get("planning_category")))
     n_des = _desert_count(districts)
     items.append((
         "Zero-facility deserts",
         f"{n_des:,}",
-        "NFHS need, no mapped facility — invisible to facility-count maps",
+        "NFHS need, no mapped facility",
     ))
     tones.append("danger" if n_des else "neutral")
     if items:
         ui.kpi_row(items, tone_each=tones)
 
 
-def _hero_actions(worst: pd.Series | None) -> None:
-    """Real, functional pill actions for the left hero card.
+# Tone -> the design-system color token (for custom rail markup only).
+_TONE_VAR = {
+    "deploy": "var(--good)", "verify": "var(--mid)", "danger": "var(--bad)",
+    "info": "var(--info)", "neutral": "var(--mdn-muted)",
+}
 
-    - "Jump to worst district" selects the #1 care-gap district (drives the detail
-      panel below) and re-centers the map on its centroid.
-    - "Toggle facility dots" flips the same session-state key the controls toggle
-      binds to, so the map updates without opening the controls expander.
+
+def _rail_row(row: pd.Series, districts: pd.DataFrame, facilities: pd.DataFrame,
+              idx: int) -> None:
+    """One selectable rail row: name+state, action pill, care-gap mini-bar, desert chip.
+
+    The row is a thin (non-widget) button styled as a pill-row; clicking it focuses
+    that district (recenter + detail) via ``_focus_on``.
     """
-    a1, a2 = st.columns(2)
-    has_worst = worst is not None
-    if a1.button("◎ Jump to worst district", key="hero_jump_worst",
-                 type="primary", use_container_width=True, disabled=not has_worst):
-        # Selecting = remember the district key (the shape ``_district_row`` expects)
-        # so the detail panel resolves to it, and capture its centroid so the map
-        # re-centers on the next run.
-        st.session_state["map_focus_geo"] = {
-            "district_name": worst.get("district_name"),
-            "state_ut": worst.get("state_ut"),
-        }
-        lat = pd.to_numeric(worst.get("district_latitude"), errors="coerce")
-        lon = pd.to_numeric(worst.get("district_longitude"), errors="coerce")
-        if pd.notna(lat) and pd.notna(lon):
-            st.session_state["map_focus_view"] = {
-                "latitude": float(lat), "longitude": float(lon), "zoom": 6.4}
+    name = str(row.get("district_name", "—"))
+    state = str(row.get("state_ut", "—"))
+    cat = row.get("planning_category")
+    action = _action_label(cat)
+    tone = _action_tone(cat)
+    score = pd.to_numeric(row.get("care_gap_score"), errors="coerce")
+    is_desert = bool(row.get("zero_facility_desert", False))
+
+    selected = False
+    geo = st.session_state.get("map_focus_geo")
+    if geo and geo.get("district_name") == row.get("district_name") \
+            and geo.get("state_ut") == row.get("state_ut"):
+        selected = True
+
+    # Mini care-gap bar (0..1 → width %). NaN -> no bar.
+    pct = 0.0 if pd.isna(score) else max(0.0, min(1.0, float(score)))
+    score_txt = "—" if pd.isna(score) else f"{float(score):.2f}"
+    desert_chip = (
+        '<span style="font-size:.6rem;font-weight:700;letter-spacing:.04em;'
+        'padding:.06rem .34rem;border-radius:var(--radius-pill);'
+        'background:rgba(255,82,82,.16);border:1px solid rgba(255,82,82,.4);'
+        'color:var(--bad);white-space:nowrap">0 facilities</span>'
+        if is_desert else ""
+    )
+    tone_color = _TONE_VAR.get(tone, "var(--mdn-muted)")
+    sel_ring = ("box-shadow:0 0 0 1px var(--good) inset;background:rgba(46,204,193,.08);"
+                if selected else "")
+
+    st.markdown(
+        f'<div class="rail-row" style="{sel_ring}">'
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem">'
+        f'<div style="min-width:0"><div style="font-weight:640;font-size:.8rem;color:var(--text);'
+        f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{html.escape(name)}</div>'
+        f'<div style="font-size:.68rem;color:var(--mdn-muted)">{html.escape(state)}</div></div>'
+        '<div style="display:flex;align-items:center;gap:.35rem;flex-shrink:0">'
+        f'{desert_chip}'
+        f'<span style="font-size:.62rem;font-weight:740;letter-spacing:.03em;'
+        f'padding:.1rem .46rem;border-radius:var(--radius-pill);color:{tone_color};'
+        f'background:color-mix(in srgb,{tone_color} 15%,transparent);'
+        f'border:1px solid color-mix(in srgb,{tone_color} 40%,transparent);'
+        f'white-space:nowrap">{html.escape(action)}</span></div></div>'
+        '<div style="display:flex;align-items:center;gap:.45rem;margin-top:.32rem">'
+        '<span style="flex:1;height:5px;border-radius:999px;background:rgba(148,174,214,.16);'
+        'overflow:hidden;display:block">'
+        f'<span style="display:block;height:100%;width:{pct * 100:.0f}%;'
+        f'background:{tone_color};border-radius:999px"></span></span>'
+        f'<span style="font-size:.66rem;font-weight:680;color:var(--mdn-muted);'
+        f'font-variant-numeric:tabular-nums">{score_txt}</span></div></div>',
+        unsafe_allow_html=True,
+    )
+    if st.button("Select", key=f"rail_pick_{idx}",
+                 use_container_width=True):
+        _focus_on(row, districts, facilities)
         st.rerun()
 
-    dots_on = bool(st.session_state.get("map_dots_on", False))
-    if a2.button("● Hide facility dots" if dots_on else "○ Show facility dots",
-                 key="hero_toggle_dots", use_container_width=True):
-        # Stash the desired state on a plain (non-widget) key; the controls toggle
-        # picks it up as its default on the next run, avoiding the "set state for an
-        # instantiated widget" exception that binding + writing one key would cause.
-        st.session_state["map_dots_pending"] = not dots_on
-        st.rerun()
 
+def _left_rail(districts: pd.DataFrame, facilities: pd.DataFrame) -> None:
+    """The frosted LEFT district rail: 2 KPIs + search + scrollable ranked list.
 
-def _left_hero(districts: pd.DataFrame) -> None:
-    """The frosted LEFT orientation/action card: context line, 2 KPIs, pill actions.
-
-    Streamlit can't wrap live widgets (KPI cards, buttons) in a raw HTML div, so
-    the frosted-card recipe is scoped onto a bordered ``st.container`` via a marker
-    + ``:has()`` selector (the same idiom the sibling tabs use), keeping the left
-    column reading as ONE intentional orientation card rather than loose elements.
+    Reuses the care-gap ranking (worst first). The list lives in a height-bounded,
+    scrollable container so the page does NOT grow tall (the "too much scrolling"
+    fix). Selecting a row drives map recenter + detail via ``_focus_on``.
     """
-    worst = _worst_district(districts)
     box = st.container(border=True)
     box.markdown(
         """
         <style>
-        div[data-testid="stVerticalBlockBorderWrapper"]:has(.map-hero-marker) {
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.map-rail-marker) {
           background: var(--glass-bg);
           border: 1px solid var(--glass-border);
           border-radius: var(--radius-card);
@@ -131,25 +279,47 @@ def _left_hero(districts: pd.DataFrame) -> None:
           -webkit-backdrop-filter: var(--glass-blur);
           backdrop-filter: var(--glass-blur);
         }
+        /* Compact, pill-row look for each rail entry's hidden Select button. */
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.map-rail-marker)
+          .rail-row { padding:.5rem .55rem;border-radius:var(--radius-sm);
+          border:1px solid var(--glass-border);background:var(--glass-bg-soft);
+          margin-bottom:.05rem; }
         </style>
-        <div class="map-hero-marker"></div>
+        <div class="map-rail-marker"></div>
         """,
         unsafe_allow_html=True,
     )
     with box:
-        st.markdown(
-            '<div class="mdn-panel-h">Orientation</div>'
-            '<div class="mdn-muted" style="margin:-.15rem 0 .55rem;line-height:1.35">'
-            'Every district scored by care gap — even zero-facility deserts that '
-            'facility-count maps miss. Pick a district on the map, or jump to the '
-            'worst one to start.</div>',
-            unsafe_allow_html=True,
-        )
-        _map_kpis(districts)
-        st.markdown('<div style="height:.35rem"></div>', unsafe_allow_html=True)
-        _hero_actions(worst)
-        st.caption("Need a recommended plan or the AI walkthrough? Open the "
-                   "**Care gaps** and **Copilot** tabs above.")
+        st.markdown('<div class="mdn-panel-h">District rail</div>', unsafe_allow_html=True)
+        _now_viewing_chip(districts)
+        _rail_kpis(districts)
+        st.markdown('<div style="height:.4rem"></div>', unsafe_allow_html=True)
+
+        query = st.text_input(
+            "Search districts", key="rail_search", placeholder="Filter by district name…",
+            label_visibility="collapsed")
+
+        ranked = pd.DataFrame()
+        if districts is not None and not districts.empty and "care_gap_score" in districts:
+            ranked = districts.sort_values("care_gap_score", ascending=False).copy()
+            if query:
+                q = query.strip().lower()
+                mask = (ranked.get("district_name").astype(str).str.lower().str.contains(q, na=False)
+                        | ranked.get("state_ut").astype(str).str.lower().str.contains(q, na=False))
+                ranked = ranked[mask]
+
+        if ranked.empty:
+            st.caption("No districts match your search.")
+            return
+
+        st.caption(f"{len(ranked):,} districts · worst care gap first · click **Select** to focus")
+        # Height-bounded, scrollable list keeps the page from growing tall.
+        list_box = st.container(height=360)
+        with list_box:
+            for i, (_, row) in enumerate(ranked.head(60).iterrows()):
+                _rail_row(row, districts, facilities, i)
+        if len(ranked) > 60:
+            st.caption(f"Showing the worst 60 of {len(ranked):,}. Refine the search to narrow.")
 
 
 def _floating_legend(view_mode: str, n_plotted: int, filtered_n: int,
@@ -212,6 +382,89 @@ def _build_layers(deserts, cells, points, show_points) -> list:
     return layers
 
 
+def _map_tooltip() -> dict:
+    """E6: a richer hover — a small nested dark card instead of a flat ``{tip}`` line.
+
+    Both layer datasets carry a pre-rendered ``tip`` HTML string (district / facility);
+    pydeck templates can't do conditional logic, so we keep ``{tip}`` as the body but
+    upgrade its CARD styling (rounded, dark, legible, accent rule) and let
+    ``data.district_hexes`` / ``data.facility_points`` decide which fields each tip
+    carries — missing fields are simply absent from the rendered string (no fabrication).
+
+    The district ``tip`` already includes care gap + need + facility count; we enrich it
+    below at build time when the extra columns (action, trust-supply %, uncertainty) are
+    present on the layer data.
+    """
+    return {
+        "html": (
+            '<div style="font-family:Inter,system-ui,sans-serif;min-width:170px;'
+            'max-width:260px">{tip}</div>'
+        ),
+        "style": {
+            "backgroundColor": "rgba(7,17,31,.96)",
+            "color": "#eaf2ff",
+            "fontSize": "12px",
+            "lineHeight": "1.42",
+            "borderRadius": "12px",
+            "border": "1px solid rgba(148,163,184,.34)",
+            "boxShadow": "0 12px 40px rgba(0,0,0,.48)",
+            "padding": "10px 12px",
+            "backdropFilter": "blur(8px)",
+        },
+    }
+
+
+def _enrich_desert_tips(deserts: pd.DataFrame) -> pd.DataFrame:
+    """Augment the per-district hover ``tip`` with action, trust-supply %, uncertainty.
+
+    Renders a small nested card. Each extra row is added ONLY when the source field is
+    present/usable on the layer data — absent fields are omitted, never fabricated.
+    """
+    if deserts is None or deserts.empty or "tip" not in deserts.columns:
+        return deserts
+    d = deserts.copy()
+
+    cat = d.get("planning_category")
+    tone_token = {
+        "real_desert_candidate": "#2eccc1",
+        "phantom_desert_or_verification_gap": "#ffbe48",
+        "supply_record_quality_problem": "#ff5252",
+        "referral_or_capacity_candidate": "#66d9ff",
+        "mixed_or_monitor": "#97a8c2",
+    }
+
+    def _row(r):
+        parts = [str(r.get("tip", ""))]
+        # Recommended action (tone-coded chip), when planning_category is present.
+        if cat is not None:
+            c = r.get("planning_category")
+            if pd.notna(c):
+                lbl = _action_label(c)
+                col = tone_token.get(str(c), "#97a8c2")
+                parts.append(
+                    f'<div style="margin-top:6px;font-size:11px"><span style="color:#97a8c2">'
+                    f'Action</span> <b style="color:{col}">{html.escape(lbl)}</b></div>'
+                )
+        # Trust-supply %, when present and non-NaN.
+        tsr = pd.to_numeric(r.get("trustworthy_supply_rate"), errors="coerce")
+        if pd.notna(tsr):
+            parts.append(
+                f'<div style="font-size:11px;color:#97a8c2">Trust supply '
+                f'<b style="color:#eaf2ff">{tsr * 100:.0f}%</b></div>'
+            )
+        # Uncertainty tier, when present.
+        unc = r.get("district_uncertainty_level")
+        if unc is not None and pd.notna(unc) and str(unc).strip():
+            parts.append(
+                f'<div style="font-size:11px;color:#97a8c2">Uncertainty '
+                f'<b style="color:#eaf2ff">{html.escape(str(unc).title())}</b></div>'
+            )
+        return "".join(parts)
+
+    d["tip"] = d.apply(_row, axis=1)
+    return d
+
+
 def _coverage_snapshot(facilities, filtered, districts) -> None:
     """Dense coverage counts + the facility-trust distribution (tucked behind a detail)."""
     total = len(facilities)
@@ -233,48 +486,28 @@ def _coverage_snapshot(facilities, filtered, districts) -> None:
                "Verify = missing supply. Automated checks, not human verification.")
 
 
-def _leaderboard(districts: pd.DataFrame) -> None:
-    """The full care-gap district ranking — behind a detail so the map stays the hero."""
-    if districts is None or districts.empty or "care_gap_score" not in districts:
-        st.caption("No district rows available to rank.")
-        return
-    ranked = districts.sort_values("care_gap_score", ascending=False).head(30).copy()
-    table = pd.DataFrame({
-        "District": ranked.get("district_name"),
-        "State": ranked.get("state_ut"),
-        "Action": ranked.get("planning_category").map(_action_label).fillna("Monitor"),
-        "Care-gap": pd.to_numeric(ranked.get("care_gap_score"), errors="coerce"),
-        "Need": pd.to_numeric(ranked.get("health_need_score"), errors="coerce"),
-        "Trust supply %": pd.to_numeric(ranked.get("trustworthy_supply_rate"), errors="coerce") * 100,
-    })
-    st.dataframe(
-        table, hide_index=True, width="stretch", height=360,
-        column_config={
-            "Care-gap": st.column_config.NumberColumn(
-                "Care-gap ▲ worse", format="%.2f",
-                help="Higher = more unmet need with less trustworthy supply."),
-            "Need": st.column_config.ProgressColumn(
-                "Need ▲ worse", format="%.2f", min_value=0, max_value=1),
-            "Trust supply %": st.column_config.ProgressColumn(
-                "Trust supply ▲ better", format="%d%%", min_value=0, max_value=100),
-        },
-    )
-    st.caption("Top 30 by care-gap score. Open the **Care gaps** tab for the full ranked queue "
-               "with per-district actions.")
-
-
 def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
     ui.tab_intro(
         "India care-gap atlas",
         f"{specialty} lens · trust-weighted demand, supply, and uncertainty",
     )
 
+    # --- Header-orientation trim: one calm line by default, the rest on hover. ---
+    st.markdown(
+        '<div class="mdn-muted" style="margin:-.2rem 0 .25rem;line-height:1.4">'
+        'Every district is scored by care gap — search the rail or click the map to '
+        'pick one.'
+        '<span title="Zero-facility deserts (NFHS need but no mapped facility) are '
+        'scored too, so they appear here even though facility-count maps miss them. '
+        'Scores are proxy decision-support, not a verified census." '
+        'style="margin-left:.4rem;cursor:help;color:var(--info);'
+        'border-bottom:1px dotted var(--info)">why this matters</span></div>',
+        unsafe_allow_html=True,
+    )
+
     # ---- All controls behind one detail expander (kept off the first glance).
     # Expander bodies still execute every run, so the widget values below are always
-    # resolved — collapsing only hides them, it does not skip them. The hero
-    # "facility dots" pill drives the toggle via the ``map_dots_*`` keys below. ----
-    # The hero "facility dots" pill stashes its intent on a plain key; consume it
-    # here (before the widget instantiates) so the toggle's default reflects it.
+    # resolved — collapsing only hides them, it does not skip them. ----
     if "map_dots_pending" in st.session_state:
         st.session_state["map_dots_on"] = st.session_state.pop("map_dots_pending")
     dots_default = bool(st.session_state.get("map_dots_on", False))
@@ -296,42 +529,48 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
         include_geo_flagged = oc3.toggle("Include flagged-geo facilities", value=False,
                                          help="Impossible / out-of-India coordinates")
 
-    # Keep the plain key in sync with the live toggle so the hero pill label is
-    # accurate even when the user flips the toggle directly in the expander.
     st.session_state["map_dots_on"] = bool(show_points)
     filtered = data.filter_facilities(facilities, specialty, include_geo_flagged)
     deserts = data.district_hexes(districts, resolution) if view_mode == "Medical deserts" else None
     cells = data.hexbin(filtered, config.DEFAULT_METRIC, resolution) if view_mode == "Facility coverage" else None
     points = data.facility_points(filtered) if show_points else None
 
+    # E6: enrich the per-district hover tip with action / trust-supply / uncertainty
+    # by joining the extra columns from the source districts table onto the layer.
+    if deserts is not None and not deserts.empty:
+        extra_cols = [c for c in ("planning_category", "district_uncertainty_level")
+                      if c in districts.columns]
+        if extra_cols:
+            merge_cols = ["district_name", "state_ut", *extra_cols]
+            deserts = deserts.merge(
+                districts[merge_cols].drop_duplicates(["district_name", "state_ut"]),
+                on=["district_name", "state_ut"], how="left")
+        deserts = _enrich_desert_tips(deserts)
+
     layers = _build_layers(deserts, cells, points, show_points)
     if not layers:
-        # Still show the orientation card so the tab never collapses to a bare info box.
-        hcol, mcol = st.columns([1, 2.4])
+        # Still show the rail so the tab never collapses to a bare info box.
+        hcol, mcol = st.columns([1, 2.3])
         with hcol:
-            _left_hero(districts)
+            _left_rail(districts, facilities)
         with mcol:
             st.info("No mappable data for this selection.")
         return
 
-    # ---- Re-center the map when the hero "jump to worst district" was used; else
-    # the calm national overview. Consume the one-shot focus view after applying it. ----
+    # ---- Re-center the map when a jump/selection was made; else the calm national
+    # overview. Consume the one-shot focus view ONLY when applying it (so a stray
+    # on_select rerun cannot swallow a pending jump — map_focus_geo stays persistent). ----
     focus_view = st.session_state.pop("map_focus_view", None)
     view = pdk.ViewState(**(focus_view if focus_view else config.INDIA_VIEW))
 
-    tooltip = {"html": "{tip}",
-               "style": {"backgroundColor": "#07111f", "color": "#eaf2ff",
-                         "fontSize": "12px", "borderRadius": "8px",
-                         "border": "1px solid rgba(148,163,184,.34)",
-                         "padding": "8px"}}
     deck = pdk.Deck(layers=layers, initial_view_state=view,
-                    map_style=config.MAP_STYLES[basemap], tooltip=tooltip)
+                    map_style=config.MAP_STYLES[basemap], tooltip=_map_tooltip())
 
-    # ===== SPLIT HERO: left orientation/action card · right map (centerpiece) =====
-    hero_left, hero_right = st.columns([1, 2.4])
-    with hero_left:
-        _left_hero(districts)
-    with hero_right:
+    # ===== COMPOSITION: left district rail · right map (centerpiece) =====
+    rail_col, map_col = st.columns([1, 2.3])
+    with rail_col:
+        _left_rail(districts, facilities)
+    with map_col:
         # Floating legend chip reads as an overlay sitting just above the map canvas.
         n_plotted = 0 if deserts is None else len(deserts)
         _floating_legend(view_mode, n_plotted, len(filtered), len(facilities))
@@ -339,7 +578,9 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
                                 on_select="rerun", selection_mode="single-object")
 
     # ---- Selected detail: facility card or district drill-down (opens on an answer).
-    # A click on the map wins; otherwise the hero "jump" focus; otherwise the worst. ----
+    # A fresh click on the map wins; otherwise the persistent focus (rail/jump); else
+    # the worst district. A map district click also refreshes the persistent focus so
+    # the "Now viewing" chip + rail highlight stay in sync. ----
     picked_f = _picked_facility(event)
     picked_d = _picked_district(event)
     if picked_f:
@@ -347,6 +588,12 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
         ui.facility_card(picked_f)
     else:
         row = _district_row(districts, picked_d) if picked_d else None
+        if row is not None:
+            # A map hex click becomes the persistent selection (rail highlight + chip).
+            st.session_state["map_focus_geo"] = {
+                "district_name": row.get("district_name"),
+                "state_ut": row.get("state_ut"),
+            }
         if row is None:
             focus_geo = st.session_state.get("map_focus_geo")
             if focus_geo:
@@ -354,16 +601,13 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
         if row is None:
             row = _worst_district(districts)
             if row is not None:
-                st.caption("Showing the highest care-gap district — click any hex to inspect another.")
+                st.caption("Showing the highest care-gap district — click any hex or rail row to inspect another.")
         if row is not None:
             ui.region_detail(row, specialty, districts)
 
-    # ---- Depth on demand: coverage snapshot, full leaderboard, methodology ----
+    # ---- Depth on demand: coverage snapshot, methodology ----
     with ui.detail("Coverage snapshot & data trust"):
         _coverage_snapshot(facilities, filtered, districts)
-
-    with ui.detail("Full care-gap district ranking"):
-        _leaderboard(districts)
 
     with ui.detail("How to read this map"):
         st.markdown(
@@ -374,6 +618,8 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
             f"*{config.DEFAULT_METRIC}* metric.\n"
             "- **Facility dots** overlay individual facilities; click one for its cited "
             "evidence and trust badge.\n"
+            "- The **district rail** (left) lists every district worst-gap-first; search "
+            "or click **Select** to recenter the map and open its breakdown.\n"
             "- Scores are proxy decision-support from NFHS-5 district indicators (2019–21) "
             "and a web-derived facility snapshot — claims, not a verified census."
         )
