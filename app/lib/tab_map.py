@@ -624,16 +624,15 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
         f"{specialty} lens · trust-weighted demand, supply, and uncertainty",
     )
 
-    # --- Header-orientation trim: one calm line by default, the rest on hover. ---
+    # --- Header orientation: one calm line, with explanation only on hover/focus. ---
     st.markdown(
         '<div class="mdn-muted" style="margin:-.2rem 0 .25rem;line-height:1.4">'
         'Every district is scored by care gap — search the rail or click the map to '
         'pick one.'
-        '<span title="Zero-facility deserts (NFHS need but no mapped facility) are '
-        'scored too, so they appear here even though facility-count maps miss them. '
-        'Scores are proxy decision-support, not a verified census." '
-        'style="margin-left:.4rem;cursor:help;color:var(--info);'
-        'border-bottom:1px dotted var(--info)">why this matters</span></div>',
+        '<span class="mdn-inline-help" tabindex="0">why this matters'
+        '<span class="mdn-inline-help-card">Districts with high NFHS need still count '
+        'when mapped provider evidence is sparse. That keeps likely medical deserts '
+        'visible instead of hiding them as missing data.</span></span></div>',
         unsafe_allow_html=True,
     )
 

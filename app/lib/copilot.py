@@ -27,7 +27,7 @@ CHIPS = [
     ("drill_conditions", "2", "Choose doctor specialty"),
     ("scenario", "3", "Build deployment plan"),
     ("whatif", "4", "Test clinic scenario"),
-    ("explain", "?", "Explain evidence"),
+    ("explain", "5", "Explain evidence"),
 ]
 
 _CONDITION_HELP = {
@@ -91,6 +91,7 @@ def route_mode_from_query(value: object) -> str | None:
         "test clinic scenario": "whatif",
         "what if": "whatif",
         "whatif": "whatif",
+        "5": "explain",
         "?": "explain",
         "explain": "explain",
         "explain evidence": "explain",
@@ -484,13 +485,13 @@ def render_copilot(facilities: pd.DataFrame, districts: pd.DataFrame, specialty:
     st.markdown('</div>', unsafe_allow_html=True)
 
     if mode == "_fallback":
-        with st.chat_message("assistant", avatar="🩺"):
+        with st.container():
             st.markdown("I can help with these — pick one:")
             for _k, ic, lb in CHIPS:
                 st.markdown(f"- {ic}  {lb}")
     elif mode in _MODES:
         title = next((f"{ic} {lb}" for k, ic, lb in CHIPS if k == mode), "")
-        with st.chat_message("assistant", avatar="🩺"):
+        with st.container():
             if title:
                 st.markdown(f"##### {title}")
             _MODES[mode](facilities, districts, specialty)

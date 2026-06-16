@@ -785,6 +785,39 @@ div[data-baseweb="select"] input {
 }
 div[data-baseweb="select"] svg {fill: var(--mdn-muted) !important;}
 div[data-baseweb="popover"] {background: rgba(8, 16, 28, .98); border-radius: var(--radius-sm);}
+.mdn-inline-help {
+  position: relative;
+  display: inline-flex;
+  margin-left: .45rem;
+  color: var(--info);
+  border-bottom: 1px dotted var(--info);
+  cursor: help;
+  outline: none;
+}
+.mdn-inline-help-card {
+  position: absolute;
+  left: 0;
+  top: 1.55rem;
+  z-index: 30;
+  width: min(360px, 86vw);
+  padding: .7rem .8rem;
+  border: 1px solid rgba(102, 217, 255, .28);
+  border-radius: var(--radius-sm);
+  background: rgba(8, 16, 28, .98);
+  color: var(--mdn-text);
+  box-shadow: var(--mdn-elev-2);
+  line-height: 1.35;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity .12s ease, transform .12s ease, visibility .12s ease;
+}
+.mdn-inline-help:hover .mdn-inline-help-card,
+.mdn-inline-help:focus .mdn-inline-help-card {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
 [data-testid="stSlider"] [role="slider"] {background: var(--mdn-teal);}
 [data-testid="stCheckbox"] label, [data-testid="stToggle"] label,
 [data-testid="stSelectbox"] label, [data-testid="stSlider"] label {
