@@ -504,30 +504,52 @@ def _tone_for(intervention: str, not_recommended: bool) -> str:
 
 
 def render_interventions(
-    facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str
+    facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str,
+    *, embedded: bool = False,
 ) -> None:
-    """Self-contained Streamlit view for the Intervention Recommender."""
+    """Self-contained Streamlit view for the Intervention Recommender.
+
+    When ``embedded`` is True (hosted inside the Planner Copilot conversation),
+    the redundant top-level title is dropped and the methodology (banner + rail)
+    is tucked behind a ``ui.detail`` expander so the copilot's conversational
+    lead-in stays the headline. Styling uses the shared design tokens either way.
+    """
     import streamlit as st
     from . import ui
 
-    st.markdown(
-        '<div class="mdn-panel-h">Next Best Health Access Intervention</div>',
-        unsafe_allow_html=True,
-    )
-    ui.decision_banner(
-        "What should be deployed first, and how sure are we?",
-        "Each district is scored with a transparent expected-value rule: "
-        "EV = P(addresses need) x benefit − P(wrong) x harm − operating cost. "
-        "Confidence reflects data uncertainty, never measured accuracy.",
-        tone="info",
-    )
-    ui.workflow_rail([
-        ("1. Rank deserts", "Highest care-gap districts first"),
-        ("2. Match action", "Need signals pick the intervention"),
-        ("3. Score EV", "Benefit vs harm vs cost"),
-        ("4. Show confidence", "Uncertainty stays visible"),
-        ("5. Cite evidence", "Sample facilities & sources"),
-    ])
+    if not embedded:
+        st.markdown(
+            '<div class="mdn-panel-h">Next Best Health Access Intervention</div>',
+            unsafe_allow_html=True,
+        )
+        ui.decision_banner(
+            "What should be deployed first, and how sure are we?",
+            "Each district is scored with a transparent expected-value rule: "
+            "EV = P(addresses need) x benefit − P(wrong) x harm − operating cost. "
+            "Confidence reflects data uncertainty, never measured accuracy.",
+            tone="info",
+        )
+        ui.workflow_rail([
+            ("1. Rank deserts", "Highest care-gap districts first"),
+            ("2. Match action", "Need signals pick the intervention"),
+            ("3. Score EV", "Benefit vs harm vs cost"),
+            ("4. Show confidence", "Uncertainty stays visible"),
+            ("5. Cite evidence", "Sample facilities & sources"),
+        ])
+    else:
+        with ui.detail("How this is scored (EV rule & workflow)"):
+            st.markdown(
+                "Each district is scored with a transparent expected-value rule: "
+                "**EV = P(addresses need) × benefit − P(wrong) × harm − operating cost.** "
+                "Confidence reflects data uncertainty, never measured accuracy."
+            )
+            ui.workflow_rail([
+                ("1. Rank deserts", "Highest care-gap districts first"),
+                ("2. Match action", "Need signals pick the intervention"),
+                ("3. Score EV", "Benefit vs harm vs cost"),
+                ("4. Show confidence", "Uncertainty stays visible"),
+                ("5. Cite evidence", "Sample facilities & sources"),
+            ])
 
     # --- load (with states) ---
     try:
@@ -602,68 +624,79 @@ def render_interventions(
     m2.metric("P(wrong)", f"{_num(best.get('p_wrong')):.2f}")
     m3.metric("Expected access gain", f"{_num(best.get('expected_access_gain')):.0f}")
 
-    # Full ranked table.
-    st.markdown(
-        '<div class="mdn-panel-h">All candidate interventions (ranked by EV)</div>',
-        unsafe_allow_html=True,
-    )
-    table = detail[[
-        "rank", "intervention", "ev_score", "expected_access_gain",
-        "est_cost_tier", "confidence", "p_addresses_need", "p_wrong",
-    ]].rename(columns={
-        "rank": "Rank", "intervention": "Intervention", "ev_score": "EV",
-        "expected_access_gain": "Access gain", "est_cost_tier": "Cost tier",
-        "confidence": "Confidence", "p_addresses_need": "P(addresses need)",
-        "p_wrong": "P(wrong)",
-    })
-    st.dataframe(table, hide_index=True, width="stretch")
-
-    # Not-recommended callout.
+    # Not-recommended callout (kept visible — it is a safety signal).
     flagged = detail[detail["not_recommended_flag"] == True]  # noqa: E712
     for _, fr in flagged.iterrows():
         if str(fr["not_recommended_reason"]).strip():
             st.warning(f"{fr['intervention']} — {fr['not_recommended_reason']}")
 
-    # Firing signals per candidate.
-    st.markdown(
-        '<div class="mdn-panel-h">Trigger signals that fired</div>',
-        unsafe_allow_html=True,
-    )
-    sig_table = detail[["intervention", "trigger_signals"]].rename(
-        columns={"intervention": "Intervention", "trigger_signals": "Signals (real values)"}
-    )
-    st.dataframe(sig_table, hide_index=True, width="stretch")
+    # Dense backing detail (ranked table, trigger signals, cited evidence). Behind
+    # a single progressive-disclosure expander when embedded in the copilot so the
+    # first glance stays the recommendation; shown inline standalone.
+    import contextlib
 
-    # Evidence: cited sample facilities / sources from the district row.
-    st.markdown(
-        '<div class="mdn-panel-h">Evidence (sample facilities & sources)</div>',
-        unsafe_allow_html=True,
-    )
-    drow = districts[
-        (districts["state_ut"].astype(str).str.strip() == str(state).strip())
-        & (districts["district_name"].astype(str).str.strip() == str(district).strip())
-    ]
-    if drow.empty:
-        st.caption("No matching district row for evidence.")
-    else:
-        from . import data as _data
-        drow0 = drow.iloc[0]
-        names = str(drow0.get("sample_facility_names", "") or "").strip()
-        claim = str(drow0.get("sample_claim_evidence", "") or "").strip()
-        url = _data._first_url(drow0.get("sample_source_urls", ""))
-        warn = str(drow0.get("facility_supply_warning", "") or "").strip()
-        if names:
-            st.markdown(f"**Facilities:** {names[:300]}")
-        if claim:
-            st.markdown(f"**Claimed (unverified):** {claim[:300]}…")
-        if url:
-            st.markdown(f"**Source:** [{url[:80]}]({url})")
-        if warn:
-            st.caption(warn)
-        if not (names or claim or url):
-            st.caption("No sample evidence recorded for this district.")
+    def _depth_ctx():
+        if embedded:
+            return ui.detail("Full ranking, trigger signals & cited evidence")
+        return contextlib.nullcontext()
 
-    st.caption(
-        "Estimates are heuristic, not measured accuracy. Telehealth is a low-confidence "
-        "default because broadband and elderly-share signals are not in this dataset."
-    )
+    with _depth_ctx():
+        # Full ranked table.
+        st.markdown(
+            '<div class="mdn-panel-h">All candidate interventions (ranked by EV)</div>',
+            unsafe_allow_html=True,
+        )
+        table = detail[[
+            "rank", "intervention", "ev_score", "expected_access_gain",
+            "est_cost_tier", "confidence", "p_addresses_need", "p_wrong",
+        ]].rename(columns={
+            "rank": "Rank", "intervention": "Intervention", "ev_score": "EV",
+            "expected_access_gain": "Access gain", "est_cost_tier": "Cost tier",
+            "confidence": "Confidence", "p_addresses_need": "P(addresses need)",
+            "p_wrong": "P(wrong)",
+        })
+        st.dataframe(table, hide_index=True, width="stretch")
+
+        # Firing signals per candidate.
+        st.markdown(
+            '<div class="mdn-panel-h">Trigger signals that fired</div>',
+            unsafe_allow_html=True,
+        )
+        sig_table = detail[["intervention", "trigger_signals"]].rename(
+            columns={"intervention": "Intervention", "trigger_signals": "Signals (real values)"}
+        )
+        st.dataframe(sig_table, hide_index=True, width="stretch")
+
+        # Evidence: cited sample facilities / sources from the district row.
+        st.markdown(
+            '<div class="mdn-panel-h">Evidence (sample facilities & sources)</div>',
+            unsafe_allow_html=True,
+        )
+        drow = districts[
+            (districts["state_ut"].astype(str).str.strip() == str(state).strip())
+            & (districts["district_name"].astype(str).str.strip() == str(district).strip())
+        ]
+        if drow.empty:
+            st.caption("No matching district row for evidence.")
+        else:
+            from . import data as _data
+            drow0 = drow.iloc[0]
+            names = str(drow0.get("sample_facility_names", "") or "").strip()
+            claim = str(drow0.get("sample_claim_evidence", "") or "").strip()
+            url = _data._first_url(drow0.get("sample_source_urls", ""))
+            warn = str(drow0.get("facility_supply_warning", "") or "").strip()
+            if names:
+                st.markdown(f"**Facilities:** {names[:300]}")
+            if claim:
+                st.markdown(f"**Claimed (unverified):** {claim[:300]}…")
+            if url:
+                st.markdown(f"**Source:** [{url[:80]}]({url})")
+            if warn:
+                st.caption(warn)
+            if not (names or claim or url):
+                st.caption("No sample evidence recorded for this district.")
+
+        st.caption(
+            "Estimates are heuristic, not measured accuracy. Telehealth is a low-confidence "
+            "default because broadband and elderly-share signals are not in this dataset."
+        )

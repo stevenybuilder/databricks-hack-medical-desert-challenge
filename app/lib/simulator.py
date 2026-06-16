@@ -346,15 +346,27 @@ def _default_district_index(districts: pd.DataFrame) -> int:
     return int(d.index.get_indexer([target])[0])
 
 
-def render_simulator(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
-    """Self-contained Streamlit view: supply bands + intervention comparison."""
+def render_simulator(
+    facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str,
+    *, embedded: bool = False,
+) -> None:
+    """Self-contained Streamlit view: supply bands + intervention comparison.
+
+    When ``embedded`` is True (hosted inside the Planner Copilot conversation),
+    the redundant top-level title and the module's own "Save this scenario"
+    button are suppressed — the copilot supplies the conversational lead-in and a
+    standardized save/shortlist affordance instead. The current scenario context
+    is published to ``st.session_state['cp_scenario_ctx']`` so the copilot can
+    persist it via ``decisions.save_scenario(...)``.
+    """
     if st is None:  # pragma: no cover
         raise RuntimeError("Streamlit is not available in this environment.")
 
-    st.markdown(
-        '<div class="mdn-panel-h">What-if scenario simulator</div>',
-        unsafe_allow_html=True,
-    )
+    if not embedded:
+        st.markdown(
+            '<div class="mdn-panel-h">What-if scenario simulator</div>',
+            unsafe_allow_html=True,
+        )
 
     # ---- empty / error states ----
     if districts is None or districts.empty:
@@ -425,23 +437,33 @@ def render_simulator(facilities: pd.DataFrame, districts: pd.DataFrame, specialt
                 else:  # pragma: no cover
                     st.metric(scen, f"{int(r['Facilities'])} fac / {int(r['Est. capacity'])} cap")
 
-        st.dataframe(
-            bands,
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "Facilities": st.column_config.NumberColumn("Facilities", format="%d"),
-                "Est. capacity": st.column_config.NumberColumn("Est. capacity", format="%d"),
-            },
-        )
+        # The full band table + chart are backing detail; tuck behind the shared
+        # progressive-disclosure expander when embedded in the copilot.
+        import contextlib
 
-        chart = bands.set_index("Scenario")[["Facilities", "Est. capacity"]]
-        st.bar_chart(chart, height=210)
-        st.caption(
-            "Never a single point estimate: counts and capacity are shown as a band. "
-            "Bands come from observed vs estimated counts, the trustworthy-supply rate "
-            "and its Wilson CI, and the per-facility capacity intervals."
+        band_ctx = (
+            ui.detail("Band table & chart")
+            if (embedded and ui is not None)
+            else contextlib.nullcontext()
         )
+        with band_ctx:
+            st.dataframe(
+                bands,
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "Facilities": st.column_config.NumberColumn("Facilities", format="%d"),
+                    "Est. capacity": st.column_config.NumberColumn("Est. capacity", format="%d"),
+                },
+            )
+
+            chart = bands.set_index("Scenario")[["Facilities", "Est. capacity"]]
+            st.bar_chart(chart, height=210)
+            st.caption(
+                "Never a single point estimate: counts and capacity are shown as a band. "
+                "Bands come from observed vs estimated counts, the trustworthy-supply rate "
+                "and its Wilson CI, and the per-facility capacity intervals."
+            )
 
         # ---- intervention comparison ----
         st.markdown(
@@ -479,22 +501,32 @@ def render_simulator(facilities: pd.DataFrame, districts: pd.DataFrame, specialt
         st.info(msg)
 
         # ---- persist this scenario (durable on the deployment target) ----
-        if decisions is not None:
-            geography_id = (
-                f"{str(district_row.get('district_name', '')).strip()}|"
-                f"{str(district_row.get('state_ut', '')).strip()}"
-            )
+        geography_id = (
+            f"{str(district_row.get('district_name', '')).strip()}|"
+            f"{str(district_row.get('state_ut', '')).strip()}"
+        )
+        assumptions = {
+            "district": str(district_row.get("district_name", "")),
+            "state_ut": str(district_row.get("state_ut", "")),
+            "specialty": str(specialty),
+            "mobile_clinics": int(mobile),
+            "capacity_increase_pct": float(cap_pct),
+            "telehealth_adoption": float(teleh),
+            "top_intervention": str(top["Scenario"]),
+            "top_access_improvement": str(top["Access improvement"]),
+        }
+        # Publish the current scenario context so a host (the Copilot) can offer a
+        # standardized save/shortlist affordance against the same selection.
+        st.session_state["cp_scenario_ctx"] = {
+            "geography_id": geography_id,
+            "label": str(labels.iloc[int(chosen)]),
+            "district_name": str(district_row.get("district_name", "")),
+            "state_ut": str(district_row.get("state_ut", "")),
+            "assumptions": assumptions,
+        }
+
+        if decisions is not None and not embedded:
             if st.button("Save this scenario", key="sim_save_scenario"):
-                assumptions = {
-                    "district": str(district_row.get("district_name", "")),
-                    "state_ut": str(district_row.get("state_ut", "")),
-                    "specialty": str(specialty),
-                    "mobile_clinics": int(mobile),
-                    "capacity_increase_pct": float(cap_pct),
-                    "telehealth_adoption": float(teleh),
-                    "top_intervention": str(top["Scenario"]),
-                    "top_access_improvement": str(top["Access improvement"]),
-                }
                 try:
                     status = decisions.save_scenario(
                         geography_id=geography_id, assumptions=assumptions,

@@ -1,7 +1,10 @@
-"""Medical Desert Navigator.
+"""CareGap — evidence-checked medical-desert planning across India.
 
-Phase 1: VF-Match-style hexbin + facility map (zoom, click-to-fly, cited detail).
-Phase 2: Top Care Gaps leaderboard + region detail (conditions + cited evidence).
+Thin app entry: page config, CSS, data load, the specialty lens, and a 3-tab
+nav (Map · Top care gaps · Copilot) dispatching to the per-tab modules. Tab
+internals live in ``lib/tab_map.py``, ``lib/tab_gaps.py`` and ``lib/copilot.py``;
+shared helpers/constants live in ``lib/tab_common.py``. The design system (tokens
++ reusable components) lives in ``lib/ui.py`` — see DESIGN_SYSTEM.md.
 
 Run locally:
     .venv/bin/streamlit run app/app.py
@@ -10,13 +13,13 @@ from __future__ import annotations
 
 import html
 
-import numpy as np
-import pandas as pd
-import pydeck as pdk
 import streamlit as st
 
-from lib import config, data, ui, charts, copilot
-from lib import decisions, interventions, simulator, trust
+from lib import config, data, ui, copilot
+from lib import tab_map, tab_gaps
+# Kept for the next wave: the Copilot will use interventions/simulator and a
+# minimal inline Save (decisions). Not routed as standalone views.
+from lib import decisions, interventions, simulator  # noqa: F401
 
 
 def _ensure_ui_helpers() -> None:
@@ -78,16 +81,52 @@ def _ensure_ui_helpers() -> None:
 
         ui.decision_banner = decision_banner
 
-    if not hasattr(ui, "workflow_rail"):
-        def workflow_rail(steps: list[tuple[str, str]]) -> None:
-            body = "".join(
-                f"""<div class="mdn-rail-step"><b>{html.escape(title)}</b>
-                <span>{html.escape(text)}</span></div>"""
-                for title, text in steps
+    # New design-system primitives — patched onto a stale module if missing so
+    # the split tab modules never crash mid-session. Canonical defs in lib/ui.py.
+    if not hasattr(ui, "panel_header"):
+        def panel_header(text: str) -> None:
+            st.markdown(
+                f'<div class="mdn-panel-h">{html.escape(str(text))}</div>',
+                unsafe_allow_html=True,
             )
-            st.markdown(f'<div class="mdn-rail">{body}</div>', unsafe_allow_html=True)
 
-        ui.workflow_rail = workflow_rail
+        ui.panel_header = panel_header
+
+    if not hasattr(ui, "tab_intro"):
+        def tab_intro(title: str, subtitle: str = "") -> None:
+            sub = f"<span>{html.escape(str(subtitle))}</span>" if subtitle else ""
+            st.markdown(
+                f"""
+                <div class="mdn-earth-strip">
+                  <div><strong>{html.escape(str(title))}</strong>{sub}</div>
+                  <div class="mdn-status-dot"></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        ui.tab_intro = tab_intro
+
+    if not hasattr(ui, "detail"):
+        def detail(label: str):
+            return st.expander(label, expanded=False)
+
+        ui.detail = detail
+
+    if not hasattr(ui, "kpi_row"):
+        def kpi_row(items, tone_each=None) -> None:
+            items = list(items)[:3]
+            if not items:
+                return
+            tones = list(tone_each or [])
+            cols = st.columns(len(items))
+            for i, (col, item) in enumerate(zip(cols, items)):
+                label, value, caption = (list(item) + ["", "", ""])[:3]
+                tone = tones[i] if i < len(tones) else "neutral"
+                with col:
+                    ui.stat_card(label, value, caption, tone)
+
+        ui.kpi_row = kpi_row
 
 
 _ensure_ui_helpers()
@@ -106,930 +145,6 @@ def _districts():
     return data.load_districts()
 
 
-def _picked_facility(state):
-    """Pull the single clicked facility object out of a pydeck selection state."""
-    try:
-        objs = state["selection"]["objects"]
-        fac = objs.get("facilities")
-        return fac[0] if fac else None
-    except (TypeError, KeyError, AttributeError):
-        return None
-
-
-def _picked_district(state):
-    """Pull the single clicked district-desert hex out of a pydeck selection state."""
-    try:
-        objs = state["selection"]["objects"]
-        d = objs.get("deserts")
-        return d[0] if d else None
-    except (TypeError, KeyError, AttributeError):
-        return None
-
-
-def _district_row(districts: pd.DataFrame, picked) -> pd.Series | None:
-    """Match a clicked desert hex back to its full district row for the causal card."""
-    if picked is None:
-        return None
-    name, state = picked.get("district_name"), picked.get("state_ut")
-    m = districts[(districts["district_name"] == name) & (districts["state_ut"] == state)]
-    return m.iloc[0] if not m.empty else None
-
-
-ACTION_LABELS = {
-    "real_desert_candidate": "Deploy",
-    "phantom_desert_or_verification_gap": "Verify first",
-    "supply_record_quality_problem": "Fix records",
-    "referral_or_capacity_candidate": "Refer",
-    "mixed_or_monitor": "Monitor",
-}
-
-ACTION_FILTERS = {
-    "All": None,
-    "Deploy": {"real_desert_candidate"},
-    "Verify first": {"phantom_desert_or_verification_gap"},
-    "Fix records": {"supply_record_quality_problem"},
-    "Refer": {"referral_or_capacity_candidate"},
-    "Monitor": {"mixed_or_monitor"},
-}
-
-ACTION_TONES = {
-    "real_desert_candidate": "deploy",
-    "phantom_desert_or_verification_gap": "verify",
-    "supply_record_quality_problem": "danger",
-    "referral_or_capacity_candidate": "info",
-    "mixed_or_monitor": "neutral",
-}
-
-ACTION_REASON = {
-    "real_desert_candidate": "High need and low trustworthy supply",
-    "phantom_desert_or_verification_gap": "Decision depends on fragile evidence",
-    "supply_record_quality_problem": "Supply likely exists, but records are weak",
-    "referral_or_capacity_candidate": "Trustworthy capacity is already visible",
-    "mixed_or_monitor": "Mixed signal; track but do not overcommit",
-}
-
-
-def _num(value, default=float("nan")) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _fmt_num(value, digits: int = 2) -> str:
-    value = _num(value)
-    return "unknown" if pd.isna(value) else f"{value:.{digits}f}"
-
-
-def _fmt_pct(value, digits: int = 0) -> str:
-    value = _num(value)
-    return "unknown" if pd.isna(value) else f"{value * 100:.{digits}f}%"
-
-
-def _fmt_int(value) -> str:
-    value = _num(value)
-    return "unknown" if pd.isna(value) else f"{int(value):,}"
-
-
-def _fmt_km(value, digits: int = 0) -> str:
-    value = _num(value)
-    return "unknown" if pd.isna(value) else f"{value:,.{digits}f} km"
-
-
-def _action_label(category) -> str:
-    return ACTION_LABELS.get(str(category), "Monitor")
-
-
-def _action_tone(category) -> str:
-    return ACTION_TONES.get(str(category), "neutral")
-
-
-def _ranked_districts(districts: pd.DataFrame, specialty: str) -> tuple[pd.DataFrame, str]:
-    ranked, gap_label = data.leaderboard(districts, specialty, top_n=len(districts))
-    ranked = ranked.copy()
-    ranked.insert(0, "Rank", range(1, len(ranked) + 1))
-    ranked["Action"] = ranked["planning_category"].map(_action_label).fillna("Monitor")
-    ranked["Decision logic"] = ranked["planning_category"].map(ACTION_REASON).fillna(ACTION_REASON["mixed_or_monitor"])
-    return ranked, gap_label
-
-
-def _selected_or_first(event, frame: pd.DataFrame) -> pd.Series | None:
-    if frame.empty:
-        return None
-    selection = event.selection.rows if event and event.selection else []
-    return frame.iloc[selection[0]] if selection else frame.iloc[0]
-
-
-def map_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
-    st.markdown(
-        f"""
-        <div class="mdn-earth-strip">
-          <div>
-            <strong>India care-gap atlas</strong>
-            <span>{specialty} lens · trust-weighted demand, supply, and uncertainty</span>
-          </div>
-          <div class="mdn-status-dot"></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    # Decluttered control bar: one primary choice + one toggle. Rest tucked away.
-    cc1, cc2, cc3 = st.columns([1.7, 1.0, 3.1])
-    with cc1:
-        view_mode = st.segmented_control(
-            "Map shows", ["Medical deserts", "Facility coverage"],
-            default="Medical deserts", label_visibility="collapsed",
-            key="map_view_mode", width="stretch") or "Medical deserts"
-    with cc2:
-        show_points = st.toggle("Facility dots", value=(view_mode == "Facility coverage"))
-    with cc3:
-        st.caption("Click a **hex** for a district's care-gap breakdown · a **dot** for facility evidence.")
-
-    with st.expander("Map options", expanded=False):
-        oc1, oc2, oc3 = st.columns(3)
-        basemap = oc1.selectbox("Style", list(config.MAP_STYLES.keys()),
-                                index=list(config.MAP_STYLES).index(config.DEFAULT_MAP_STYLE))
-        resolution = oc2.slider("Desert cell size", 3, 6, 4,
-                                help="Lower = bigger hexes (national view); higher = finer detail.")
-        include_geo_flagged = oc3.toggle("Include flagged-geo facilities", value=False,
-                                         help="Impossible / out-of-India coordinates")
-
-    filtered = data.filter_facilities(facilities, specialty, include_geo_flagged)
-    deserts = data.district_hexes(districts, resolution) if view_mode == "Medical deserts" else None
-    cells = data.hexbin(filtered, config.DEFAULT_METRIC, resolution) if view_mode == "Facility coverage" else None
-    points = data.facility_points(filtered) if show_points else None
-
-    map_col, panel_col = st.columns([4.25, 1.08], gap="medium")
-
-    with map_col:
-        view = pdk.ViewState(**config.INDIA_VIEW)
-        layers = []
-        if deserts is not None and not deserts.empty:
-            layers.append(pdk.Layer(
-                "H3HexagonLayer", id="deserts", data=deserts,
-                get_hexagon="h3", get_fill_color="fill_color",
-                pickable=True, extruded=False, stroked=True, filled=True,
-                opacity=0.80, coverage=0.95,
-                get_line_color=[255, 255, 255, 45], line_width_min_pixels=0.4))
-        if cells is not None and not cells.empty:
-            layers.append(pdk.Layer(
-                "H3HexagonLayer", id="hexbins", data=cells,
-                get_hexagon="h3", get_fill_color="fill_color",
-                pickable=True, extruded=False, stroked=True, filled=True,
-                opacity=0.55 if show_points else 0.82, coverage=0.92,
-                get_line_color=[255, 255, 255, 60], line_width_min_pixels=0.5))
-        if points is not None and not points.empty:
-            layers.append(pdk.Layer(
-                "ScatterplotLayer", id="facilities", data=points,
-                get_position="[lon, lat]", get_fill_color="point_color",
-                get_radius=600, radius_min_pixels=2.5, radius_max_pixels=9,
-                pickable=True, auto_highlight=True, stroked=True,
-                get_line_color=[255, 255, 255, 140], line_width_min_pixels=0.4))
-
-        if not layers:
-            st.info("No mappable data for this selection.")
-            return
-
-        tooltip = {"html": "{tip}",
-                   "style": {"backgroundColor": "#07111f", "color": "#eaf2ff",
-                             "fontSize": "12px", "borderRadius": "8px",
-                             "border": "1px solid rgba(148,163,184,.34)",
-                             "padding": "8px"}}
-        deck = pdk.Deck(layers=layers, initial_view_state=view,
-                        map_style=config.MAP_STYLES[basemap], tooltip=tooltip)
-        event = st.pydeck_chart(deck, height=620, key="map",
-                                on_select="rerun", selection_mode="single-object")
-
-        if view_mode == "Medical deserts":
-            ui.legend("Better coverage", "Medical desert", higher_is_worse=True)
-            n_plotted = 0 if deserts is None else len(deserts)
-            n_des = int(districts.get("zero_facility_desert",
-                        pd.Series(dtype=bool)).fillna(False).sum())
-            st.caption(f"{n_plotted:,} districts shown · green = better coverage, red = wider care gap · "
-                       f"includes {n_des} zero-facility deserts that facility-count maps miss.")
-        else:
-            ui.legend("Lower", "Higher", config.METRICS[config.DEFAULT_METRIC][2])
-            total = len(facilities)
-            st.caption(f"{len(filtered):,} of {total:,} facilities mapped · "
-                       f"{total - len(filtered):,} excluded (missing/flagged coordinates).")
-
-        picked_f = _picked_facility(event)
-        picked_d = _picked_district(event)
-        if picked_f:
-            ui.facility_card(picked_f)
-        else:
-            # Open on an answer: default to the #1 care-gap district until one is clicked.
-            row = _district_row(districts, picked_d) if picked_d else None
-            if row is None and not districts.empty:
-                row = districts.sort_values("care_gap_score", ascending=False).iloc[0]
-                st.caption("Showing the highest care-gap district — click any hex to inspect another.")
-            if row is not None:
-                ui.region_detail(row, specialty, districts)
-
-    with panel_col:
-        st.markdown('<div class="mdn-panel-h">Coverage snapshot</div>', unsafe_allow_html=True)
-        total = len(facilities)
-        st.metric("Facilities mapped", f"{len(filtered):,}",
-                  help=f"of {total:,} total · {total - len(filtered):,} lack valid coordinates")
-        n_des = int(districts.get("zero_facility_desert", pd.Series(dtype=bool)).fillna(False).sum())
-        st.metric("Zero-facility deserts", f"{n_des}", help="Districts with NFHS need but no mapped facility.")
-        # One legible trust distribution instead of three competing metrics.
-        tier = (filtered["trust_tier"].value_counts()
-                if "trust_tier" in filtered.columns else pd.Series(dtype=int))
-        st.markdown('<div class="mdn-panel-h">Facility data trust</div>', unsafe_allow_html=True)
-        st.altair_chart(
-            charts.trust_distribution_bar(int(tier.get("High", 0)), int(tier.get("Medium", 0)),
-                                          int(tier.get("Verify", 0))),
-            use_container_width=True)
-        st.caption("High = passes all checks · Medium = some supply fields estimated (CatBoost) · "
-                   "Verify = missing supply. Automated checks, not human verification.")
-
-
-def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
-    ranked_all, gap_label = _ranked_districts(districts, specialty)
-    st.markdown(
-        f"""
-        <div class="mdn-earth-strip">
-          <div>
-            <strong>Care-gap leaderboard</strong>
-            <span>{specialty} · ranked by need, supply, and evidence — with a next action</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    if ranked_all.empty:
-        st.info("No district rows are available for this specialty lens.")
-        return
-
-    # Message-in-title (IBCS SAY): lead with the finding, not just the subject.
-    _desert = districts.get("zero_facility_desert")
-    if _desert is not None:
-        n_desert = int(_desert.fillna(False).astype(bool).sum())
-        top50 = districts.nlargest(50, "care_gap_score")
-        n_top = int(top50.get("zero_facility_desert", pd.Series(False, index=top50.index))
-                    .fillna(False).astype(bool).sum())
-        st.markdown(
-            '<div style="margin:.2rem 0 .6rem;padding:.7rem 1rem;border-radius:12px;'
-            'border:1px solid rgba(102,217,255,.30);background:linear-gradient(90deg,'
-            'rgba(102,217,255,.10),rgba(102,217,255,.02));color:#eaf2ff;font-size:1.02rem;'
-            'line-height:1.45">'
-            f'<strong style="color:#9be8ff">{n_desert} districts have zero mapped facilities</strong> '
-            f'— and they hold <strong style="color:#9be8ff">{n_top} of the top 50</strong> care gaps. '
-            'Facility-count maps miss them; this ranking surfaces them.</div>',
-            unsafe_allow_html=True,
-        )
-
-    deploy_count = int(districts["planning_category"].eq("real_desert_candidate").sum())
-    top = ranked_all.iloc[0]
-
-    # ---- WOW headline: trustworthy supply collapses to zero where need is worst ----
-    # Honest, recomputed: among the worst-N care-gap districts, how many have *no*
-    # facility passing automated trust checks (trustworthy_supply_rate == 0).
-    _wow_n = min(50, len(ranked_all))
-    _tsr = pd.to_numeric(
-        ranked_all.head(_wow_n).get("trustworthy_supply_rate"), errors="coerce"
-    ).fillna(0.0)
-    _zero_trust = int((_tsr <= 0).sum())
-    _wow_pct = (_zero_trust / _wow_n * 100) if _wow_n else 0.0
-    st.markdown(
-        '<div style="margin:.2rem 0 .55rem;padding:.85rem 1.1rem;border-radius:12px;'
-        'border:1px solid rgba(255,82,82,.34);background:linear-gradient(90deg,'
-        'rgba(255,82,82,.12),rgba(255,82,82,.02));display:flex;align-items:baseline;'
-        'gap:.7rem;flex-wrap:wrap">'
-        f'<span style="font-size:2.1rem;font-weight:800;color:#ff8d8d;line-height:1;'
-        'font-variant-numeric:tabular-nums">'
-        f'{_zero_trust}/{_wow_n}</span>'
-        '<span style="color:#eaf2ff;font-size:1.0rem;line-height:1.35">of the worst '
-        f'care-gap districts have <strong>0% trustworthy supply</strong> — '
-        f'{_wow_pct:.0f}% of the highest-need places have <em>no</em> facility that '
-        'passes automated checks.</span></div>',
-        unsafe_allow_html=True,
-    )
-
-    c1, c2 = st.columns(2)
-    with c1:
-        ui.stat_card(
-            "Top district",
-            f"{top.get('district_name', 'unknown')}, {top.get('state_ut', 'unknown')}",
-            f"{_action_label(top.get('planning_category'))} · {gap_label} {_fmt_num(top.get('gap'))}",
-            _action_tone(top.get("planning_category")),
-        )
-    with c2:
-        ui.stat_card("Deploy candidates", f"{deploy_count:,}", "Strong unmet-need signal", "deploy")
-
-    st.caption(
-        "Source: NFHS-5 district health indicators (2019–21) + web-derived FDR facility snapshot · "
-        "706 districts · observed FDR rows are claims, not a verified facility census · "
-        "scores are proxy decision-support, not gold-validated."
-    )
-
-    # ---- Small-multiples: top deserts at a glance (condition-gap fingerprints) ----
-    st.markdown('<div class="mdn-panel-h">Top deserts at a glance</div>', unsafe_allow_html=True)
-    st.altair_chart(
-        charts.small_multiples_deserts(districts, data.district_top_conditions, n=6),
-        use_container_width=True,
-    )
-    st.caption("Each panel = one of the worst care-gap districts · bars = its top medical-condition "
-               "gaps · deeper red = further above the national median.")
-
-    filter_choice = st.segmented_control(
-        "Action filter",
-        list(ACTION_FILTERS.keys()),
-        default="All",
-        label_visibility="collapsed",
-        key="care_gap_action_filter",
-        width="stretch",
-    )
-    filter_choice = filter_choice or "All"
-    allowed = ACTION_FILTERS[filter_choice]
-    ranked = ranked_all if allowed is None else ranked_all[ranked_all["planning_category"].isin(allowed)]
-    ranked = ranked.head(30).copy()
-
-    if ranked.empty:
-        st.info("No districts match this action filter.")
-        return
-
-    mix = (
-        ranked_all["Action"].value_counts()
-        .rename_axis("Action")
-        .reset_index(name="Districts")
-    )
-    table = pd.DataFrame({
-        "Rank": ranked["Rank"],
-        "District": ranked["district_name"],
-        "State": ranked["state_ut"],
-        "Action": ranked["Action"],
-        gap_label: pd.to_numeric(ranked["gap"], errors="coerce"),
-        "Need": pd.to_numeric(ranked["health_need_score"], errors="coerce"),
-        "Trust supply %": pd.to_numeric(ranked["trustworthy_supply_rate"], errors="coerce") * 100,
-        "Uncertainty": ranked["district_uncertainty_level"].astype(str).str.title(),
-        "Decision logic": ranked["Decision logic"],
-    })
-
-    queue_col, detail_col = st.columns([1.18, 1], gap="medium")
-    with queue_col:
-        st.markdown('<div class="mdn-panel-h">Action queue</div>', unsafe_allow_html=True)
-        st.altair_chart(charts.action_mix(mix), use_container_width=True)
-        ev = st.dataframe(
-            table,
-            hide_index=True,
-            width="stretch",
-            height=430,
-            on_select="rerun",
-            selection_mode="single-row",
-            column_config={
-                "Rank": st.column_config.NumberColumn(format="%d"),
-                gap_label: st.column_config.NumberColumn(
-                    f"{gap_label} ▲ worse", format="%.2f",
-                    help="Higher = more unmet need with less trustworthy supply."),
-                "Need": st.column_config.ProgressColumn(
-                    "Need ▲ worse", format="%.2f", min_value=0, max_value=1,
-                    help="NFHS health-burden score. Higher is worse."),
-                "Trust supply %": st.column_config.ProgressColumn(
-                    "Trust supply ▲ better", format="%d%%", min_value=0, max_value=100,
-                    help="Share of observed facilities passing trust checks. Higher is better."),
-            },
-        )
-
-    selected = _selected_or_first(ev, ranked)
-    with detail_col:
-        if selected is None:
-            st.info("No district selected.")
-            return
-        action = _action_label(selected.get("planning_category"))
-        ui.decision_banner(
-            f"{action}: {selected.get('district_name', 'unknown')}, {selected.get('state_ut', 'unknown')}",
-            f"{gap_label} {_fmt_num(selected.get('gap'))} · trust supply {_fmt_pct(selected.get('trustworthy_supply_rate'))} · uncertainty {str(selected.get('district_uncertainty_level', 'unknown')).title()}",
-            _action_tone(selected.get("planning_category")),
-        )
-        ui.region_detail(selected, specialty, districts)
-
-
-def uncertainty_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
-    snapshot = data.quality_snapshot(facilities, districts)
-    total = max(snapshot["facility_rows"], 1)
-    district_queue = data.active_district_queue()
-    facility_queue = data.active_facility_queue()
-    geo_candidates = data.geo_validation_candidates(facilities, top_n=50)
-    decision_volume, decision_concepts, decision_rules, decision_policy = data.statistical_decision_report()
-
-    st.markdown(
-        """
-        <div class="mdn-earth-strip">
-          <div>
-            <strong>Evidence console</strong>
-            <span>Semantic missingness, confidence intervals, source agreement, and active uncertainty queues</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    s1, s2, s3, s4 = st.columns(4)
-    with s1:
-        ui.stat_card(
-            "Review load",
-            _fmt_pct(snapshot["needs_human_review"] / total),
-            f"{snapshot['needs_human_review']:,} of {total:,} facility rows",
-            "verify",
-        )
-    with s2:
-        ui.stat_card(
-            "Trusted supply",
-            _fmt_pct(snapshot["trustworthy_supply"] / total),
-            f"{snapshot['trustworthy_supply']:,} rows passed automated checks",
-            "deploy",
-        )
-    with s3:
-        ui.stat_card(
-            "Geo / contradiction risk",
-            f"{snapshot['contradicted_or_geo_invalid']:,}",
-            "Rows that can move supply to the wrong place",
-            "danger",
-        )
-    with s4:
-        ui.stat_card(
-            "Active queue",
-            f"{len(district_queue):,} / {len(facility_queue):,}",
-            "District and facility rows ranked by value of information",
-            "info",
-        )
-
-    ui.workflow_rail([
-        ("Claim", "Crawl and extracted facility text"),
-        ("Clean", "Semantic nulls, joins, and geo checks"),
-        ("Estimate", "Capacity/doctor intervals where sparse"),
-        ("Corroborate", "HFR, PM-JAY, India Post, OSM, geocoders"),
-        ("Decide", "Recommend, verify, enrich, or abstain"),
-    ])
-
-    view = st.segmented_control(
-        "Evidence view",
-        ["Overview", "Triage queues", "Geo source agreement", "Missingness", "Model policy"],
-        default="Overview",
-        label_visibility="collapsed",
-        key="uncertainty_console_view",
-        width="stretch",
-    )
-    view = view or "Overview"
-
-    if view == "Overview":
-        o1, o2 = st.columns([1, 1], gap="medium")
-        with o1:
-            st.markdown('<div class="mdn-panel-h">What can break the recommendation</div>',
-                        unsafe_allow_html=True)
-            st.dataframe(
-                data.messiness_breakdown(facilities, districts),
-                hide_index=True,
-                width="stretch",
-                height=285,
-            )
-        with o2:
-            st.markdown('<div class="mdn-panel-h">What the app is allowed to claim</div>',
-                        unsafe_allow_html=True)
-            st.dataframe(
-                data.explainability_model_card(),
-                hide_index=True,
-                width="stretch",
-                height=285,
-            )
-        if not decision_volume.empty:
-            st.markdown('<div class="mdn-panel-h">Decision volume proof</div>',
-                        unsafe_allow_html=True)
-            focus_groups = ["Facility quality flags", "District planning category"]
-            proof = decision_volume[decision_volume["category_group"].isin(focus_groups)].copy()
-            chart = proof[proof["category_group"].eq("Facility quality flags")].copy()
-            if not chart.empty:
-                chart = chart.sort_values("rows", ascending=False).head(8)
-                st.bar_chart(chart.set_index("category")["rows"], height=220, color="#66d9ff")
-            proof = proof.rename(columns={
-                "category_group": "Group",
-                "grain": "Grain",
-                "category": "Category",
-                "rows": "Rows",
-                "denominator": "Denominator",
-            })
-            st.dataframe(
-                proof[["Group", "Grain", "Category", "Rows", "Denominator", "Pct", "Wilson 95%", "Bayes 95%"]],
-                hide_index=True,
-                width="stretch",
-                height=260,
-                column_config={
-                    "Rows": st.column_config.NumberColumn(format="%d"),
-                    "Denominator": st.column_config.NumberColumn(format="%d"),
-                },
-            )
-
-    elif view == "Triage queues":
-        focus = st.segmented_control(
-            "Queue type",
-            ["Districts", "Facilities"],
-            default="Districts",
-            label_visibility="collapsed",
-            key="active_queue_type",
-            width="stretch",
-        )
-        focus = focus or "Districts"
-        if focus == "Districts":
-            if district_queue.empty:
-                st.info("No active district queue artifact found.")
-            else:
-                dq_source = district_queue.head(40).copy()
-                top_action = str(dq_source.get("active_learning_action", pd.Series(["unknown"])).mode().iloc[0])
-                q1, q2, q3 = st.columns(3)
-                with q1:
-                    ui.stat_card("Rows ranked", f"{len(district_queue):,}", "Districts with decision-fragile evidence", "info")
-                with q2:
-                    ui.stat_card("Top action", top_action.replace("_", " "), "Dominant value-of-information route", "verify")
-                with q3:
-                    ui.stat_card("Median CI width", _fmt_num(dq_source.get("aggregate_ci_width", pd.Series(dtype=float)).median()), "Aggregate uncertainty span", "danger")
-                dq = dq_source.rename(columns={
-                    "active_uncertainty_rank": "Rank",
-                    "active_uncertainty_score": "Score",
-                    "active_learning_action": "Action",
-                    "state_ut": "State",
-                    "district_name": "District",
-                    "planning_category": "Planning category",
-                    "observed_facility_rows": "Observed rows",
-                    "care_gap_score": "Care gap",
-                    "trust_gap_score": "Trust gap",
-                    "aggregate_ci_width": "CI width",
-                    "sample_size_uncertainty_score": "Sample uncertainty",
-                })
-                left, right = st.columns([1.2, 1], gap="medium")
-                with left:
-                    ev = st.dataframe(
-                        dq[[
-                            "Rank", "Score", "Action", "State", "District",
-                            "Planning category", "Observed rows", "Care gap",
-                            "Trust gap", "CI width", "Sample uncertainty",
-                        ]],
-                        hide_index=True,
-                        width="stretch",
-                        height=430,
-                        on_select="rerun",
-                        selection_mode="single-row",
-                        column_config={
-                            "Score": st.column_config.NumberColumn(format="%.3f"),
-                            "Care gap": st.column_config.NumberColumn(format="%.3f"),
-                            "Trust gap": st.column_config.NumberColumn(format="%.3f"),
-                            "CI width": st.column_config.NumberColumn(format="%.3f"),
-                            "Sample uncertainty": st.column_config.NumberColumn(format="%.3f"),
-                        },
-                    )
-                row = _selected_or_first(ev, dq_source)
-                with right:
-                    if row is not None:
-                        ui.active_district_detail(row, specialty)
-        else:
-            if facility_queue.empty:
-                st.info("No active facility queue artifact found.")
-            else:
-                fq_source = facility_queue.head(40).copy()
-                f1, f2, f3 = st.columns(3)
-                with f1:
-                    ui.stat_card("Rows ranked", f"{len(facility_queue):,}", "Facility claims most likely to change decisions", "info")
-                with f2:
-                    ui.stat_card("Median trust band", _fmt_num((fq_source["proxy_trust_interval_high"] - fq_source["proxy_trust_interval_low"]).median()), "Proxy interval width", "verify")
-                with f3:
-                    ui.stat_card("Median geo band", _fmt_km(fq_source.get('pre_geocode_uncertainty_band_high_km', pd.Series(dtype=float)).median()), "Before external source agreement", "danger")
-                fq = fq_source.rename(columns={
-                    "active_uncertainty_rank": "Rank",
-                    "active_uncertainty_score": "Score",
-                    "active_learning_action": "Action",
-                    "external_validation_action": "External action",
-                    "facility_name": "Facility",
-                    "facilityTypeId": "Type",
-                    "state_ut": "State",
-                    "district_name": "District",
-                    "proxy_trust_interval_low": "Trust low",
-                    "proxy_trust_interval_high": "Trust high",
-                    "pre_geocode_uncertainty_band_high_km": "Geo band high km",
-                    "first_source_url": "Source",
-                })
-                show = [
-                    "Rank", "Score", "Action", "External action", "Facility",
-                    "Type", "State", "District", "Trust low", "Trust high",
-                    "Geo band high km", "Source",
-                ]
-                left, right = st.columns([1.2, 1], gap="medium")
-                with left:
-                    ev = st.dataframe(
-                        fq[[c for c in show if c in fq]],
-                        hide_index=True,
-                        width="stretch",
-                        height=430,
-                        on_select="rerun",
-                        selection_mode="single-row",
-                        column_config={
-                            "Score": st.column_config.NumberColumn(format="%.3f"),
-                            "Trust low": st.column_config.NumberColumn(format="%.3f"),
-                            "Trust high": st.column_config.NumberColumn(format="%.3f"),
-                            "Geo band high km": st.column_config.NumberColumn(format="%.1f"),
-                            "Source": st.column_config.LinkColumn("Source"),
-                        },
-                    )
-                row = _selected_or_first(ev, fq_source)
-                with right:
-                    if row is not None:
-                        ui.active_facility_detail(row)
-
-    elif view == "Geo source agreement":
-        if geo_candidates.empty:
-            st.info("No geo-validation candidates artifact found.")
-        else:
-            g1, g2, g3 = st.columns(3)
-            with g1:
-                ui.stat_card("Candidates", f"{len(geo_candidates):,}", "Highest-priority rows for geocoder/source checks", "info")
-            with g2:
-                ui.stat_card("Median planning band", _fmt_km(geo_candidates["pre_geocode_uncertainty_band_high_km"].median()), "Pre-geocode high band", "verify")
-            with g3:
-                ui.stat_card("Max priority", _fmt_num(geo_candidates["external_validation_priority_score"].max(), 2), "Clinical impact plus geo fragility", "danger")
-        p1, p2 = st.columns([1.05, 1], gap="medium")
-        with p1:
-            st.markdown('<div class="mdn-panel-h">Validation pipeline</div>', unsafe_allow_html=True)
-            st.dataframe(data.geo_validation_steps(), hide_index=True, width="stretch", height=245)
-        with p2:
-            st.markdown('<div class="mdn-panel-h">Acceptance rules</div>', unsafe_allow_html=True)
-            st.dataframe(data.geo_quality_rules(), hide_index=True, width="stretch", height=245)
-
-        priors = data.geocoder_uncertainty_priors()
-        if not priors.empty:
-            st.markdown('<div class="mdn-panel-h">Geocoder uncertainty priors</div>',
-                        unsafe_allow_html=True)
-            st.dataframe(
-                priors,
-                hide_index=True,
-                width="stretch",
-                height=220,
-                column_config={
-                    "proxy_confidence_low": st.column_config.NumberColumn(format="%.2f"),
-                    "proxy_confidence_high": st.column_config.NumberColumn(format="%.2f"),
-                    "planning_uncertainty_radius_km": st.column_config.NumberColumn(format="%.1f"),
-                },
-            )
-
-        if not geo_candidates.empty:
-            st.markdown('<div class="mdn-panel-h">Geo-validation candidates</div>',
-                        unsafe_allow_html=True)
-            geo_source = geo_candidates.head(35).copy()
-            geo_display = geo_source.rename(columns={
-                "facility_name": "Facility",
-                "facilityTypeId": "Type",
-                "geo_review_reason": "Reason",
-                "geo_review_score": "Priority",
-                "geo_quality": "Current geo quality",
-                "geo_distance_km_to_pincode_centroid": "PIN distance km",
-                "current_coordinates": "Current coordinates",
-                "address_city": "City",
-                "address_stateOrRegion": "State",
-                "address_zipOrPostcode": "PIN",
-                "geocoder_query": "Geocoder query",
-                "external_validation_action": "External action",
-                "external_validation_priority_score": "External priority",
-                "pre_geocode_uncertainty_band_high_km": "Geo band high km",
-                "fuzzy_precheck_status": "Fuzzy precheck",
-            })
-            geo_cols = [
-                "Facility", "Type", "Reason", "External action", "External priority",
-                "Priority", "Current geo quality", "PIN distance km", "Geo band high km",
-                "Fuzzy precheck", "City", "State", "PIN", "Geocoder query",
-            ]
-            left, right = st.columns([1.25, 1], gap="medium")
-            with left:
-                geo_event = st.dataframe(
-                    geo_display[[c for c in geo_cols if c in geo_display]],
-                    hide_index=True,
-                    width="stretch",
-                    height=390,
-                    on_select="rerun",
-                    selection_mode="single-row",
-                    column_config={
-                        "Priority": st.column_config.NumberColumn(format="%.1f"),
-                        "External priority": st.column_config.NumberColumn(format="%.3f"),
-                        "PIN distance km": st.column_config.NumberColumn(format="%.1f"),
-                        "Geo band high km": st.column_config.NumberColumn(format="%.1f"),
-                    },
-                )
-            row = _selected_or_first(geo_event, geo_source)
-            with right:
-                if row is not None:
-                    ui.geo_candidate_detail(row)
-
-        st.markdown('<div class="mdn-panel-h">External validation sources</div>',
-                    unsafe_allow_html=True)
-        st.dataframe(
-            data.validation_sources(),
-            hide_index=True,
-            width="stretch",
-            height=260,
-            column_config={"URL": st.column_config.LinkColumn("URL")},
-        )
-
-    elif view == "Missingness":
-        missing = data.missingness_summary(facilities)
-        card_cols = st.columns(3)
-        for col, (_, row) in zip(card_cols, missing.head(3).iterrows()):
-            with col:
-                ui.stat_card(
-                    str(row["Incomplete area"]),
-                    str(row["Pct of records"]),
-                    f"{int(row['Rows']):,} rows need estimation, enrichment, or review",
-                    "verify",
-                )
-
-        left, right = st.columns([1, 1], gap="medium")
-        with left:
-            st.markdown('<div class="mdn-panel-h">Incomplete fields and handling</div>',
-                        unsafe_allow_html=True)
-            st.dataframe(
-                missing,
-                hide_index=True,
-                width="stretch",
-                height=320,
-                column_config={"Rows": st.column_config.NumberColumn(format="%d")},
-            )
-        with right:
-            st.markdown('<div class="mdn-panel-h">Allowed treatments</div>',
-                        unsafe_allow_html=True)
-            st.dataframe(data.missing_data_methods(), hide_index=True, width="stretch", height=320)
-
-        st.markdown('<div class="mdn-panel-h">Evidence review seed queue</div>',
-                    unsafe_allow_html=True)
-        qc1, qc2 = st.columns([1.2, 1])
-        with qc1:
-            focus = st.selectbox(
-                "Queue focus",
-                ["Highest-risk first", "Uncertainty review queue", "Contradictions and geo failures",
-                 "Positive controls"],
-            )
-        with qc2:
-            top_n = st.slider("Rows", 25, 150, 75, step=25)
-
-        queue = data.verification_queue(facilities, specialty, focus, top_n=top_n)
-        if queue.empty:
-            st.info("No facilities match this queue focus for the selected specialty.")
-        else:
-            display = queue.rename(columns={
-                "facility_name": "Facility",
-                "facilityTypeId": "Type",
-                "address_city": "City",
-                "district_name": "District",
-                "state_ut": "State",
-                "service_signal": "Service signal",
-                "primary_concern": "Primary concern",
-                "verification_channel": "First action",
-                "label_seed": "Seed label",
-                "review_priority": "Priority",
-                "data_readiness_score": "Readiness",
-                "join_confidence": "Join confidence",
-                "geo_quality": "Geo quality",
-                "first_source_url": "Source",
-            })
-            show_cols = ["Facility", "Type", "City", "District", "State", "Service signal",
-                         "Primary concern", "First action", "Seed label", "Priority",
-                         "Readiness", "Join confidence", "Geo quality", "Source"]
-            left, right = st.columns([1.25, 1], gap="medium")
-            with left:
-                ev = st.dataframe(
-                    display[[c for c in show_cols if c in display]],
-                    hide_index=True,
-                    width="stretch",
-                    height=390,
-                    on_select="rerun",
-                    selection_mode="single-row",
-                    column_config={
-                        "Priority": st.column_config.NumberColumn(format="%.1f"),
-                        "Readiness": st.column_config.NumberColumn(format="%.2f"),
-                        "Join confidence": st.column_config.NumberColumn(format="%.2f"),
-                        "Source": st.column_config.LinkColumn("Source"),
-                    },
-                )
-            row = _selected_or_first(ev, queue)
-            with right:
-                if row is not None:
-                    ui.verification_detail(row)
-
-        st.markdown('<div class="mdn-panel-h">Verification protocol</div>',
-                    unsafe_allow_html=True)
-        st.dataframe(
-            data.verification_checks(),
-            hide_index=True,
-            width="stretch",
-            height=215,
-            column_config={"Priority": st.column_config.NumberColumn(format="%d")},
-        )
-
-    else:
-        seed_summary, seed_breakdown, seed_report = data.golden_seed_report()
-        model_summary, model_tasks, model_report = data.supervised_model_report()
-
-        if not decision_volume.empty:
-            st.markdown('<div class="mdn-panel-h">Decision category volumes and statistical policy</div>',
-                        unsafe_allow_html=True)
-            groups = sorted(decision_volume["category_group"].dropna().unique().tolist())
-            preferred_group = "Facility quality flags"
-            selected_group = st.selectbox(
-                "Decision volume lens",
-                groups,
-                index=groups.index(preferred_group) if preferred_group in groups else 0,
-            )
-            shown = decision_volume[decision_volume["category_group"].eq(selected_group)].copy()
-            shown = shown.rename(columns={
-                "category_group": "Group",
-                "grain": "Grain",
-                "category": "Category",
-                "rows": "Rows",
-                "denominator": "Denominator",
-                "exclusive": "Exclusive",
-                "method_note": "Method note",
-            })
-            st.dataframe(
-                shown[[
-                    "Group", "Grain", "Category", "Rows", "Denominator",
-                    "Pct", "Wilson 95%", "Bayes 95%", "Exclusive", "Method note",
-                ]],
-                hide_index=True,
-                width="stretch",
-                height=360,
-                column_config={
-                    "Rows": st.column_config.NumberColumn(format="%d"),
-                    "Denominator": st.column_config.NumberColumn(format="%d"),
-                },
-            )
-
-        p1, p2 = st.columns([1, 1], gap="medium")
-        with p1:
-            if not decision_concepts.empty:
-                st.markdown('<div class="mdn-panel-h">Statistical concepts in use</div>',
-                            unsafe_allow_html=True)
-                st.dataframe(
-                    decision_concepts[["Concept", "Use now", "Where applied", "Why relevant"]],
-                    hide_index=True,
-                    width="stretch",
-                    height=300,
-                )
-        with p2:
-            if not decision_rules.empty:
-                st.markdown('<div class="mdn-panel-h">Decision rules</div>',
-                            unsafe_allow_html=True)
-                st.dataframe(
-                    decision_rules[["Decision", "Rule", "Statistical role"]],
-                    hide_index=True,
-                    width="stretch",
-                    height=300,
-                )
-        ev_policy = decision_policy.get("expected_value_policy", {})
-        if ev_policy:
-            ui.decision_banner(
-                "Expected value, not blind confidence",
-                "EV(action) = P(correct) * benefit - P(wrong) * harm - operating_cost. "
-                f"Current probability source: {ev_policy.get('probability_source_now', 'proxy evidence score')}.",
-                "info",
-            )
-
-        if not seed_summary.empty:
-            st.markdown('<div class="mdn-panel-h">Golden prediction seed report</div>',
-                        unsafe_allow_html=True)
-            r1, r2 = st.columns([1, 1], gap="medium")
-            with r1:
-                st.dataframe(
-                    seed_summary,
-                    hide_index=True,
-                    width="stretch",
-                    height=240,
-                    column_config={"Value": st.column_config.NumberColumn(format="%d")},
-                )
-            with r2:
-                st.dataframe(
-                    seed_breakdown,
-                    hide_index=True,
-                    width="stretch",
-                    height=240,
-                    column_config={"Rows": st.column_config.NumberColumn(format="%d")},
-                )
-            guardrails = seed_report.get("guardrails", [])
-            if guardrails:
-                st.caption("Guardrails: " + " · ".join(guardrails))
-
-        if not model_summary.empty:
-            st.markdown('<div class="mdn-panel-h">Supervised model trainer report</div>',
-                        unsafe_allow_html=True)
-            policy = model_report.get("model_policy", {})
-            ui.decision_banner(
-                "No gold labels, no accuracy claim",
-                policy.get("why", "Rows become trainable only after source corroboration."),
-                "verify",
-            )
-            m1, m2 = st.columns([1, 1], gap="medium")
-            with m1:
-                st.dataframe(model_summary, hide_index=True, width="stretch", height=230)
-            with m2:
-                st.dataframe(model_tasks, hide_index=True, width="stretch", height=230)
-            st.caption("Upgrade path: " + policy.get("upgrade_path", ""))
-
-
 def main() -> None:
     facilities = _facilities()
     districts = _districts()
@@ -1046,20 +161,12 @@ def main() -> None:
         )
 
     st.markdown(
-        """
-        <div class="mdn-nav-groups">
-          <span class="mdn-nav-grp mdn-nav-explore">Plan</span>
-          <span class="mdn-nav-sep">Map · Top care gaps · Copilot</span>
-          <span class="mdn-nav-sep">|</span>
-          <span class="mdn-nav-grp mdn-nav-verify">Evidence &amp; methods</span>
-          <span class="mdn-nav-sep">Interventions · Scenario · Uncertainty · Trust · Decisions</span>
-        </div>
-        """,
+        '<div class="mdn-nav-caption">Plan · Map · Top care gaps · Copilot</div>',
         unsafe_allow_html=True,
     )
     primary_view = st.segmented_control(
         "Primary view",
-        ["Map", "Top care gaps", "Copilot", "Advanced"],
+        ["Map", "Top care gaps", "Copilot"],
         default="Map",
         label_visibility="collapsed",
         key="primary_view",
@@ -1067,35 +174,11 @@ def main() -> None:
     )
     primary_view = primary_view or "Map"
     if primary_view == "Map":
-        map_tab(facilities, districts, specialty)
+        tab_map.render(facilities, districts, specialty)
     elif primary_view == "Top care gaps":
-        gaps_tab(districts, specialty)
-    elif primary_view == "Copilot":
-        copilot.render_copilot(facilities, districts, specialty)
+        tab_gaps.render(districts, specialty)
     else:
-        # Advanced — supporting tools, de-emphasized so the demo path stays obvious.
-        # Nothing removed; these remain one click away under a secondary selector.
-        st.caption("Supporting analysis tools — the core demo lives in Map and Top care gaps.")
-        advanced_view = st.segmented_control(
-            "Advanced view",
-            ["Interventions", "Scenario lab", "Uncertainty console",
-             "Trust & conformal", "Decisions & feedback"],
-            default="Interventions",
-            label_visibility="collapsed",
-            key="advanced_view",
-            width="stretch",
-        )
-        advanced_view = advanced_view or "Interventions"
-        if advanced_view == "Interventions":
-            interventions.render_interventions(facilities, districts, specialty)
-        elif advanced_view == "Scenario lab":
-            simulator.render_simulator(facilities, districts, specialty)
-        elif advanced_view == "Uncertainty console":
-            uncertainty_tab(facilities, districts, specialty)
-        elif advanced_view == "Trust & conformal":
-            trust.render_trust(facilities, districts, specialty)
-        else:
-            decisions.render_decisions(facilities, districts, specialty)
+        copilot.render_copilot(facilities, districts, specialty)
 
 
 if __name__ == "__main__":

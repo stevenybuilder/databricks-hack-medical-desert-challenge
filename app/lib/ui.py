@@ -36,6 +36,36 @@ _CSS = """
               system-ui, sans-serif;
   /* tabular numerals -> the precise HUD / command-center readout feel */
   --mdn-tnum: "tnum" 1, "lnum" 1;
+
+  /* ===== DESIGN SYSTEM TOKENS (single source of truth — see DESIGN_SYSTEM.md) =====
+     Semantic color tokens. worse = red per the app's higher_is_worse convention.
+     These are the canonical names tabs reference; the --mdn-* aliases above are
+     kept for back-compat and now point at the same hues. */
+  --good: #2eccc1;   /* teal  — deploy / better / passes checks            */
+  --mid:  #ffbe48;   /* amber — verify / caution / mid                     */
+  --bad:  #ff5252;   /* red   — danger / worse / fails checks (worse=red)  */
+  --info: #66d9ff;   /* sky   — neutral evidence / reference accent        */
+
+  /* Surface + text tokens (canonical names; alias the dark theme values). */
+  --bg:     var(--mdn-bg);
+  --panel:  var(--mdn-panel);
+  --text:   var(--mdn-text);
+  --muted:  var(--mdn-muted);
+  --line:   var(--mdn-line);
+
+  /* Typographic scale (one ramp the whole app uses). */
+  --fs-display: 1.9rem;   /* hero / greeting                        */
+  --fs-h1:      1.36rem;  /* KPI value, primary stat                */
+  --fs-h2:      1.06rem;  /* tab-intro title, banner title          */
+  --fs-body:    .88rem;   /* default body copy                      */
+  --fs-caption: .72rem;   /* captions, kickers, panel headers       */
+
+  /* Spacing scale (4px base). */
+  --sp-1: .25rem;
+  --sp-2: .5rem;
+  --sp-3: .75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
 }
 
 #MainMenu, footer, header[data-testid="stHeader"] {visibility: hidden;}
@@ -146,7 +176,7 @@ hr {border-color: var(--mdn-line);}
 .mdn-earth-strip strong {
   display: block;
   color: var(--mdn-text);
-  font-size: 1rem;
+  font-size: var(--fs-h2);
   line-height: 1.1;
 }
 .mdn-earth-strip span {color: var(--mdn-muted); font-size: .78rem;}
@@ -201,7 +231,7 @@ hr {border-color: var(--mdn-line);}
 .mdn-card-value {
   margin-top: .28rem;
   color: var(--mdn-text);
-  font-size: 1.36rem;
+  font-size: var(--fs-h1);
   font-weight: 800;
   line-height: 1.08;
   font-variant-numeric: tabular-nums;
@@ -400,7 +430,7 @@ div[role="radiogroup"] label:hover {color: var(--mdn-text);}
 }
 [data-testid="stMetricDelta"] svg {display: none;}
 .mdn-panel-h {
-  font-size: .72rem;
+  font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: .1em;
   text-transform: uppercase;
@@ -446,7 +476,7 @@ div[role="radiogroup"] label:hover {color: var(--mdn-text);}
 .mdn-legend-bar {
   height: 8px;
   border-radius: 999px;
-  background: linear-gradient(90deg,#2eccc1 0%,#ffbe48 50%,#ff5252 100%);
+  background: linear-gradient(90deg, var(--good) 0%, var(--mid) 50%, var(--bad) 100%);
   border: 1px solid rgba(255, 255, 255, .12);
   box-shadow: 0 0 16px rgba(46, 204, 193, .18), 0 4px 12px rgba(0, 0, 0, .3);
 }
@@ -458,35 +488,15 @@ div[role="radiogroup"] label:hover {color: var(--mdn-text);}
   margin-top: 4px;
 }
 
-/* ---- Two-tier navigation grouping (purely visual; labels drive dispatch) ---- */
-.mdn-nav-groups {
-  display: flex;
-  align-items: center;
-  gap: .55rem;
-  flex-wrap: wrap;
+/* ---- Minimal nav caption (3-tab world) ---- */
+.mdn-nav-caption {
   margin: .1rem 0 .15rem;
-  font-size: .68rem;
+  font-size: var(--fs-caption);
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--mdn-dim);
   font-weight: 700;
 }
-.mdn-nav-groups .mdn-nav-grp {
-  display: inline-flex;
-  align-items: center;
-  gap: .42rem;
-  padding: .12rem .1rem;
-}
-.mdn-nav-groups .mdn-nav-grp::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-}
-.mdn-nav-groups .mdn-nav-explore::before {background: var(--mdn-sky); box-shadow: 0 0 9px rgba(102,217,255,.6);}
-.mdn-nav-groups .mdn-nav-act::before {background: var(--mdn-teal); box-shadow: 0 0 9px rgba(46,204,193,.6);}
-.mdn-nav-groups .mdn-nav-verify::before {background: var(--mdn-amber); box-shadow: 0 0 9px rgba(255,190,72,.6);}
-.mdn-nav-groups .mdn-nav-sep {color: rgba(148,174,214,.3); font-weight: 400;}
 
 /* ---- Heading idiom: keep st.subheader / st.header on the house look ---- */
 [data-testid="stHeading"] h1, [data-testid="stHeading"] h2,
@@ -563,6 +573,66 @@ def header() -> None:
           <div class="mdn-chip">India · evidence-weighted planning · uncertainty visible</div>
         </div>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+# ---- Standardized tab primitives (every tab consumes these) -----------------
+# See DESIGN_SYSTEM.md. These four enforce the consistency the next-wave tab
+# agents must inherit: one title treatment, a capped KPI row, one expander
+# affordance, and one section-header style.
+
+def tab_intro(title: str, subtitle: str = "") -> None:
+    """Standard tab header. Every tab MUST start with this.
+
+    One consistent title treatment + an optional one-line subtitle.
+    """
+    sub = f"<span>{html.escape(str(subtitle))}</span>" if subtitle else ""
+    st.markdown(
+        f"""
+        <div class="mdn-earth-strip">
+          <div>
+            <strong>{html.escape(str(title))}</strong>
+            {sub}
+          </div>
+          <div class="mdn-status-dot"></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def kpi_row(items: list[tuple[str, str, str]], tone_each: list[str] | None = None) -> None:
+    """Minimal KPI row reusing ``stat_card`` (capped at 3 — minimalist first glance).
+
+    ``items`` is a list of (label, value, caption). ``tone_each`` optionally
+    supplies a tone per card ("deploy"/"verify"/"danger"/"info"/"neutral").
+    """
+    items = list(items)[:3]
+    if not items:
+        return
+    tones = list(tone_each or [])
+    cols = st.columns(len(items))
+    for i, (col, item) in enumerate(zip(cols, items)):
+        label, value, caption = (list(item) + ["", "", ""])[:3]
+        tone = tones[i] if i < len(tones) else "neutral"
+        with col:
+            stat_card(label, value, caption, tone)
+
+
+def detail(label: str):
+    """The ONE progressive-disclosure affordance every tab uses for "more detail".
+
+    Thin wrapper around a collapsed ``st.expander``; returns the expander context
+    so callers can ``with ui.detail("..."):``. Keeps depth uniform across tabs.
+    """
+    return st.expander(label, expanded=False)
+
+
+def panel_header(text: str) -> None:
+    """Consistent in-tab section header (the ``mdn-panel-h`` treatment)."""
+    st.markdown(
+        f'<div class="mdn-panel-h">{html.escape(str(text))}</div>',
         unsafe_allow_html=True,
     )
 

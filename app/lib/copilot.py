@@ -10,7 +10,12 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from . import charts, data
+from . import charts, data, interventions, simulator, ui
+
+try:  # persistence is best-effort and never raises to the UI
+    from . import decisions
+except Exception:  # pragma: no cover - keeps copilot importable headless
+    decisions = None  # type: ignore
 
 # Chip set — each maps to a deterministic mode below. Labels are the planner's own
 # questions; the internal mode keys (col 0) must stay stable.
@@ -22,21 +27,25 @@ CHIPS = [
     ("explain", "📊", "How do you know? (methods & uncertainty)"),
 ]
 
+# Copilot styling consumes the SHARED design tokens (defined in ui.inject_css's
+# :root, injected first in app entry) so the Copilot matches the rest of the app
+# — same font, same text/muted/accent colors. See DESIGN_SYSTEM.md.
 _CSS = """
 <style>
-.cp-greet { font-size:1.9rem; font-weight:760; color:#eaf2ff; line-height:1.15; margin:.2rem 0 .1rem; }
-.cp-greet .sub { color:#7f8ea3; }
-.cp-hint { color:#93a4b8; font-size:.95rem; margin-bottom:1rem; }
+.cp-greet { font-family: var(--mdn-font); font-size: var(--fs-display); font-weight:760;
+            color: var(--text); line-height:1.15; margin:.2rem 0 .1rem; }
+.cp-greet .sub { color: var(--muted); }
+.cp-hint { color: var(--muted); font-size: var(--fs-body); margin-bottom:1rem; }
 /* Gemini-style pill chips (scoped to copilot buttons via the wrapper) */
 .cp-chips div[data-testid="stButton"] > button {
-  border-radius:999px; border:1px solid rgba(148,163,184,.22);
+  border-radius:999px; border:1px solid var(--mdn-glass-border);
   background:linear-gradient(180deg, rgba(18,28,46,.9), rgba(11,19,33,.9));
-  color:#eaf2ff; font-weight:600; text-align:left; padding:.6rem 1rem;
-  box-shadow:0 6px 18px rgba(0,0,0,.25); transition:all .15s ease;
+  color: var(--text); font-family: var(--mdn-font); font-weight:600; text-align:left;
+  padding:.6rem 1rem; box-shadow: var(--mdn-elev-1); transition:all .15s ease;
 }
 .cp-chips div[data-testid="stButton"] > button:hover {
-  border-color:rgba(102,217,255,.5); transform:translateY(-1px);
-  box-shadow:0 10px 26px rgba(0,0,0,.35);
+  border-color: var(--info); transform:translateY(-1px);
+  box-shadow: var(--mdn-elev-2);
 }
 </style>
 """
@@ -112,54 +121,91 @@ def _mode_drill_conditions(facilities, districts, specialty):
                "Bar = district · gray tick = national.")
 
 
-def _mode_scenario(facilities, districts, specialty):
-    real = districts[districts["planning_category"] == "real_desert_candidate"]
-    pool = real if not real.empty else districts
-    label = st.selectbox("District to plan for",
-                         [f"{r.district_name}, {r.state_ut}" for r in
-                          pool.sort_values("care_gap_score", ascending=False).head(50).itertuples()],
-                         key="cp_scn_district")
-    row = _district_by_label(districts, label)
-    if row is None:
+def _save_affordance(geography_id: str, label: str, *, assumptions: dict | None = None,
+                     note: str = "", key: str = "") -> None:
+    """Standardized inline 'Save plan' / 'Shortlist district' row.
+
+    Replaces the removed standalone Decisions desk so the persistence we built
+    stays reachable from the copilot's grounded answers. Best-effort: every
+    ``decisions.*`` call already swallows errors and returns a status dict, so
+    this row never raises. A tiny caption reports where the write landed.
+    """
+    if decisions is None or not geography_id:
         return
-    desert = bool(row.get("zero_facility_desert", False))
-    gap = float(pd.to_numeric(row.get("care_gap_score"), errors="coerce") or 0)
-    rec = ("Deploy new access — **mobile clinic + CHW outreach**" if desert else
-           "Verify records, then deploy targeted capacity")
-    st.markdown(f"**{label}** · care gap **{gap:.2f}** · "
-                f"{'zero mapped facilities' if desert else 'sparse trustworthy supply'}")
-    st.success(f"**Recommended intervention:** {rec}")
-    ev = pd.DataFrame({
-        "Lever": ["Mobile clinic (1)", "CHW outreach team", "Telehealth node"],
-        "Est. coverage lift": [0.18, 0.11, 0.04 if desert else 0.07],
-        "Confidence": ["Medium", "Medium", "Low (no broadband data)"],
-    })
-    st.dataframe(ev, hide_index=True, width="stretch",
-                 column_config={"Est. coverage lift": st.column_config.ProgressColumn(
-                     "Est. coverage lift", format="%.0f%%", min_value=0, max_value=0.3)})
-    st.caption("Expected-value estimates are proxy planning aids (no verified outcome labels). "
-               "Telehealth is pinned low — broadband isn't in the dataset.")
+    c1, c2, _ = st.columns([1.1, 1.1, 2.2])
+    with c1:
+        if st.button("💾 Save plan", key=f"cp_save_{key}", use_container_width=True):
+            status = decisions.save_scenario(
+                geography_id=geography_id, assumptions=assumptions or {}, note=note,
+            ) or {}
+            st.toast("Plan saved.", icon="💾")
+            st.caption(status.get("detail", ""))
+    with c2:
+        shortlisted = False
+        try:
+            shortlisted = decisions.is_shortlisted(geography_id)
+        except Exception:
+            shortlisted = False
+        verb = "★ Shortlisted" if shortlisted else "☆ Shortlist district"
+        if st.button(verb, key=f"cp_short_{key}", use_container_width=True):
+            status = decisions.toggle_shortlist(
+                geography_id, label=label,
+                reason="Flagged from Planner Copilot for verification.",
+            ) or {}
+            st.toast("Shortlist updated.", icon="★")
+            st.caption(status.get("detail", ""))
+
+
+def _mode_scenario(facilities, districts, specialty):
+    # The Copilot's grounded answer to "What should I deploy here?" is the full
+    # Interventions recommender, hosted natively inside the conversation.
+    st.markdown(
+        "Here's where I'd act first and what I'd deploy — each district ranked by a "
+        "transparent expected-value rule, with confidence kept honest. Pick a district "
+        "to see its recommended intervention and the evidence behind it."
+    )
+    interventions.render_interventions(facilities, districts, specialty, embedded=True)
+
+    # Inline persistence on the district the recommender is currently inspecting.
+    sel = st.session_state.get("interv_district")
+    row = _district_by_label(districts, sel) if sel else None
+    if row is not None:
+        gap = float(pd.to_numeric(row.get("care_gap_score"), errors="coerce") or 0)
+        _save_affordance(
+            geography_id=f"{row['district_name']}|{row['state_ut']}",
+            label=sel,
+            assumptions={
+                "source": "copilot_interventions",
+                "district": str(row["district_name"]),
+                "state_ut": str(row["state_ut"]),
+                "specialty": str(specialty),
+                "care_gap_score": gap,
+            },
+            note=f"Intervention plan saved from Copilot for {sel}.",
+            key="scn",
+        )
 
 
 def _mode_whatif(facilities, districts, specialty):
-    label = st.selectbox("District", _top_districts(districts, 80), key="cp_wi_district")
-    row = _district_by_label(districts, label)
-    if row is None:
-        return
-    gap = float(pd.to_numeric(row.get("care_gap_score"), errors="coerce") or 0)
-    c1, c2 = st.columns(2)
-    clinics = c1.slider("New clinics deployed", 0, 5, 1, key="cp_wi_clinics")
-    chw = c2.slider("CHW outreach teams", 0, 5, 1, key="cp_wi_chw")
-    # Simple, transparent projection: each lever chips away at the supply-scarcity term.
-    lift = min(0.12 * clinics + 0.06 * chw, 0.6)
-    projected = max(gap - lift, 0)
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Current care gap", f"{gap:.2f}")
-    m2.metric("Projected care gap", f"{projected:.2f}", delta=f"-{gap - projected:.2f}",
-              delta_color="inverse")
-    m3.metric("Modeled lift", f"{lift*100:.0f}%")
-    st.caption("Transparent linear what-if (0.12/clinic, 0.06/CHW team), capped — a planning "
-               "sketch, not a fitted causal model.")
+    # The Copilot's grounded answer to "What if I add clinics?" is the full
+    # Scenario lab (what-if simulator + supply bands), hosted in the conversation.
+    st.markdown(
+        "Let's simulate it. Pick a district and move the levers — I'll project supply "
+        "under best / most-likely / worst-case uncertainty and rank the interventions "
+        "by access gain, keeping low-confidence options honestly flagged."
+    )
+    simulator.render_simulator(facilities, districts, specialty, embedded=True)
+
+    # Inline persistence on the scenario context the simulator just published.
+    ctx = st.session_state.get("cp_scenario_ctx") or {}
+    if ctx.get("geography_id"):
+        _save_affordance(
+            geography_id=ctx["geography_id"],
+            label=ctx.get("label", ""),
+            assumptions=ctx.get("assumptions") or {},
+            note=f"What-if scenario saved from Copilot for {ctx.get('label', '')}.",
+            key="wi",
+        )
 
 
 def _mode_explain(facilities, districts, specialty):
@@ -201,14 +247,17 @@ _MODES = {
 
 def render_copilot(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
+    # Standard tab header (design-system contract); the conversational greeting
+    # below remains the hero when no mode is active.
+    ui.tab_intro("Planner Copilot",
+                 "Grounded answers — every reply cites its data and shows its uncertainty.")
     mode = st.session_state.get("cp_mode")
 
     if not mode:
-        st.markdown('<div class="cp-greet">Planner Copilot<br>'
-                    '<span class="sub">Where should we start?</span></div>',
+        st.markdown('<div class="cp-greet">Where should we start?</div>',
                     unsafe_allow_html=True)
         st.markdown('<div class="cp-hint">Grounded in trust-weighted facility evidence and NFHS '
-                    'health need — every answer cites its data and shows its uncertainty.</div>',
+                    'health need — pick a question below or ask in your own words.</div>',
                     unsafe_allow_html=True)
 
     # Chips (always visible so planners can switch modes).
