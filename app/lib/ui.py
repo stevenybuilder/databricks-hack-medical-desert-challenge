@@ -209,10 +209,13 @@ hr {border-color: var(--mdn-line);}
   display: flex;
   align-items: flex-start;
   gap: .72rem;
-  padding: .85rem .92rem;
-  background: rgba(8, 15, 26, .9);
-  border: 1px solid var(--mdn-line);
-  border-radius: 8px;
+  padding: .9rem .95rem;
+  background: linear-gradient(180deg, rgba(13, 24, 42, .66), rgba(8, 15, 26, .52));
+  border: 1px solid var(--mdn-glass-border);
+  border-radius: var(--mdn-radius);
+  box-shadow: var(--mdn-elev-soft);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
 }
 .mdn-decision-banner strong {
   display: block;
@@ -233,11 +236,14 @@ hr {border-color: var(--mdn-line);}
   gap: .5rem;
 }
 .mdn-rail-step {
-  border: 1px solid var(--mdn-line);
-  border-radius: 8px;
-  padding: .62rem .68rem;
-  background: rgba(8, 15, 26, .68);
+  border: 1px solid var(--mdn-glass-border);
+  border-radius: var(--mdn-radius);
+  padding: .64rem .7rem;
+  background: var(--mdn-panel-soft);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
+.mdn-rail-step:hover {border-color: var(--mdn-line-strong); transform: translateY(-1px);}
 .mdn-rail-step b {
   display: block;
   color: var(--mdn-text);
