@@ -29,8 +29,8 @@ _CSS = """
   /* two-tier elevation scale: depth is intentional, not ad-hoc */
   --mdn-elev-1: 0 6px 18px rgba(0, 0, 0, .28);
   --mdn-elev-2: 0 14px 34px rgba(0, 0, 0, .42);
-  --mdn-radius: 12px;
-  --mdn-radius-lg: 14px;
+  --mdn-radius: 16px;        /* alias -> --radius-card (modern rounded surfaces) */
+  --mdn-radius-lg: 16px;
   --mdn-font: "Inter", "SF Pro Display", ui-sans-serif, -apple-system,
               BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
               system-ui, sans-serif;
@@ -52,6 +52,27 @@ _CSS = """
   --text:   var(--mdn-text);
   --muted:  var(--mdn-muted);
   --line:   var(--mdn-line);
+
+  /* ===== MODERN-DARK polish tokens (vfmatch-style: frosted, rounded, airy) =====
+     Dark identity retained. Rounding scale, soft shadow, and a reusable
+     frosted-glass surface that cards/panels/expanders/legend all share. */
+  --radius-card: 16px;   /* cards, panels, expanders, floating cards   */
+  --radius-sm:   10px;   /* inputs, inner chips, small controls        */
+  --radius-pill: 999px;  /* buttons, segmented control, chips           */
+
+  /* Soft layered depth (calm, not harsh). */
+  --shadow-card:  0 8px 30px rgba(0, 0, 0, .35);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, .48);
+
+  /* Frosted-glass surface recipe (translucent panel + blur amount). */
+  --glass-bg:      rgba(20, 28, 44, .66);   /* legible translucent panel  */
+  --glass-bg-soft: rgba(16, 24, 38, .54);   /* lighter inner surfaces     */
+  --glass-blur:    blur(14px) saturate(125%);
+  --glass-border:  var(--mdn-glass-border); /* hairline, see token above  */
+
+  /* Airier rhythm: generous default padding + section gaps. */
+  --pad-card:  1.2rem;   /* comfortable card / panel padding           */
+  --gap-section: 1.1rem; /* vertical breathing room between sections    */
 
   /* Typographic scale (one ramp the whole app uses). */
   --fs-display: 1.9rem;   /* hero / greeting                        */
@@ -89,10 +110,10 @@ html, body, .stApp, [data-testid="stAppViewContainer"],
 }
 [data-testid="stSidebar"] {background: rgba(7, 13, 24, .9);}
 .block-container {
-  padding: .7rem 1.15rem 1.2rem 1.15rem;
+  padding: 1.1rem 1.4rem 1.6rem 1.4rem;
   max-width: 100%;
 }
-[data-testid="stVerticalBlock"] {gap: .74rem;}
+[data-testid="stVerticalBlock"] {gap: var(--gap-section);}
 [data-testid="stMarkdownContainer"], [data-testid="stCaptionContainer"],
 [data-testid="stText"], label, p, span {color: inherit;}
 [data-testid="stCaptionContainer"] {color: var(--mdn-muted);}
@@ -111,10 +132,10 @@ hr {border-color: var(--mdn-line);}
   gap: .7rem;
   padding: .6rem .85rem;
   margin-bottom: .2rem;
-  background: linear-gradient(180deg, rgba(11, 21, 38, .8), rgba(6, 12, 22, .72));
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius-lg);
-  box-shadow: var(--mdn-elev);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   backdrop-filter: blur(20px) saturate(140%);
 }
@@ -151,35 +172,44 @@ hr {border-color: var(--mdn-line);}
   min-height: 56px;
   display: flex;
   align-items: center;
-  padding: .72rem .9rem;
+  padding: .9rem 1rem;
   color: var(--mdn-muted);
-  background: var(--mdn-panel-soft);
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
+  background: var(--glass-bg-soft);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
   font-size: .82rem;
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 .mdn-earth-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: .8rem;
-  padding: .68rem .85rem;
-  background: linear-gradient(180deg, rgba(13, 24, 42, .62), rgba(8, 15, 26, .5));
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
-  box-shadow: var(--mdn-elev-soft);
-  -webkit-backdrop-filter: blur(16px) saturate(130%);
-  backdrop-filter: blur(16px) saturate(130%);
+  padding: 1.1rem 1.25rem;
+  margin: .3rem 0 .5rem;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 .mdn-earth-strip strong {
   display: block;
   color: var(--mdn-text);
-  font-size: var(--fs-h2);
-  line-height: 1.1;
+  font-size: 1.46rem;
+  font-weight: 780;
+  letter-spacing: -.015em;
+  line-height: 1.12;
 }
-.mdn-earth-strip span {color: var(--mdn-muted); font-size: .78rem;}
+.mdn-earth-strip span {
+  display: block;
+  color: var(--mdn-muted);
+  font-size: .86rem;
+  margin-top: .28rem;
+  line-height: 1.3;
+}
 .mdn-status-dot {
   width: 8px;
   height: 8px;
@@ -188,16 +218,41 @@ hr {border-color: var(--mdn-line);}
   box-shadow: 0 0 14px rgba(46, 204, 193, .7);
   flex: 0 0 auto;
 }
+/* ===== Reusable frosted-glass surface (the hub recipe) =====
+   Any markup can wrap content in .mdn-glass for the standard frosted card.
+   .mdn-float is the same surface tuned to FLOAT over the map (heavier shadow,
+   slightly more opaque so labels stay legible against bright basemaps). */
+.mdn-glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--pad-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  color: var(--mdn-text);
+}
+.mdn-float {
+  background: rgba(13, 20, 34, .82);   /* more opaque -> legible over a map */
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-float);
+  padding: .9rem 1rem;
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  backdrop-filter: blur(16px) saturate(130%);
+  color: var(--mdn-text);
+}
+
 .mdn-card {
   position: relative;
-  background: linear-gradient(180deg, rgba(13, 24, 42, .6), rgba(8, 15, 26, .48));
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
-  padding: .9rem .95rem;
-  min-height: 104px;
-  box-shadow: var(--mdn-elev-soft);
-  -webkit-backdrop-filter: blur(14px) saturate(125%);
-  backdrop-filter: blur(14px) saturate(125%);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  padding: var(--pad-card);
+  min-height: 112px;
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   overflow: hidden;
 }
 .mdn-card::before {
@@ -229,31 +284,32 @@ hr {border-color: var(--mdn-line);}
   text-transform: uppercase;
 }
 .mdn-card-value {
-  margin-top: .28rem;
+  margin-top: .35rem;
   color: var(--mdn-text);
   font-size: var(--fs-h1);
-  font-weight: 800;
-  line-height: 1.08;
+  font-weight: 820;
+  letter-spacing: -.015em;
+  line-height: 1.06;
   font-variant-numeric: tabular-nums;
   font-feature-settings: var(--mdn-tnum);
 }
 .mdn-card-caption {
-  margin-top: .32rem;
+  margin-top: .4rem;
   color: var(--mdn-muted);
   font-size: .78rem;
-  line-height: 1.28;
+  line-height: 1.3;
 }
 .mdn-decision-banner {
   display: flex;
   align-items: flex-start;
-  gap: .72rem;
-  padding: .9rem .95rem;
-  background: linear-gradient(180deg, rgba(13, 24, 42, .66), rgba(8, 15, 26, .52));
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
-  box-shadow: var(--mdn-elev-soft);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
+  gap: .8rem;
+  padding: var(--pad-card);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 .mdn-decision-banner strong {
   display: block;
@@ -274,10 +330,10 @@ hr {border-color: var(--mdn-line);}
   gap: .5rem;
 }
 .mdn-rail-step {
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
-  padding: .64rem .7rem;
-  background: var(--mdn-panel-soft);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  padding: .8rem .85rem;
+  background: var(--glass-bg-soft);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
@@ -317,7 +373,7 @@ hr {border-color: var(--mdn-line);}
 div[data-baseweb="select"] > div {
   background: rgba(9, 17, 30, .8);
   border-color: var(--mdn-line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   min-height: 40px;
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
@@ -333,7 +389,7 @@ div[data-baseweb="select"] input {
   color: var(--mdn-text) !important;
 }
 div[data-baseweb="select"] svg {fill: var(--mdn-muted) !important;}
-div[data-baseweb="popover"] {background: rgba(8, 16, 28, .98); border-radius: 10px;}
+div[data-baseweb="popover"] {background: rgba(8, 16, 28, .98); border-radius: var(--radius-sm);}
 [data-testid="stSlider"] [role="slider"] {background: var(--mdn-teal);}
 [data-testid="stCheckbox"] label, [data-testid="stToggle"] label,
 [data-testid="stSelectbox"] label, [data-testid="stSlider"] label {
@@ -342,19 +398,46 @@ div[data-baseweb="popover"] {background: rgba(8, 16, 28, .98); border-radius: 10
   font-weight: 600;
   letter-spacing: .01em;
 }
-[data-testid="stButton"] button {
-  background: rgba(13, 24, 42, .7);
+/* ===== Pill buttons (global, modern + usable) =====
+   Buttons, form-submit, download, and popover triggers all read as pills:
+   rounded-full, translucent/elevated, hairline border, hover lift. Tap
+   targets stay >=36px; focus ring handled by the global :focus-visible rule. */
+div[data-testid="stButton"] > button,
+div[data-testid="stFormSubmitButton"] > button,
+div[data-testid="stDownloadButton"] > button,
+div[data-testid="stPopover"] > button {
+  background: var(--glass-bg-soft);
   border: 1px solid var(--mdn-line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-pill);
   color: var(--mdn-text);
   font-weight: 600;
+  min-height: 36px;
+  padding: .5rem 1.1rem;
+  box-shadow: var(--mdn-elev-1);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
-[data-testid="stButton"] button:hover {
+div[data-testid="stButton"] > button:hover,
+div[data-testid="stFormSubmitButton"] > button:hover,
+div[data-testid="stDownloadButton"] > button:hover,
+div[data-testid="stPopover"] > button:hover {
   border-color: rgba(46, 204, 193, .6);
-  box-shadow: 0 0 0 2px rgba(46, 204, 193, .16);
+  box-shadow: var(--mdn-elev-2);
+  transform: translateY(-1px);
   color: #fff;
+}
+div[data-testid="stButton"] > button:active,
+div[data-testid="stFormSubmitButton"] > button:active,
+div[data-testid="stDownloadButton"] > button:active {
+  transform: translateY(0);
+  box-shadow: var(--mdn-elev-1);
+}
+/* Primary buttons read as a filled teal pill (clear, distinct call-to-action). */
+div[data-testid="stButton"] > button[kind="primary"],
+div[data-testid="stFormSubmitButton"] > button[kind="primary"] {
+  background: linear-gradient(180deg, rgba(46, 204, 193, .26), rgba(46, 204, 193, .12));
+  border-color: rgba(46, 204, 193, .55);
+  color: #eafffb;
 }
 
 button[data-baseweb="tab"] {
@@ -407,13 +490,13 @@ div[data-testid="stSegmentedControl"] button[kind="segmented_controlActive"] {
 div[role="radiogroup"] label:hover {color: var(--mdn-text);}
 
 [data-testid="stMetric"] {
-  background: linear-gradient(180deg, rgba(13, 24, 42, .58), rgba(8, 15, 26, .46));
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
-  padding: .72rem .8rem;
-  box-shadow: var(--mdn-elev-soft);
-  -webkit-backdrop-filter: blur(12px) saturate(120%);
-  backdrop-filter: blur(12px) saturate(120%);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  padding: 1rem 1.05rem;
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 [data-testid="stMetric"]:hover {border-color: var(--mdn-line-strong); transform: translateY(-1px);}
 [data-testid="stMetricLabel"] p {font-size: .72rem; color: var(--mdn-muted); font-weight: 600; letter-spacing: .02em;}
@@ -451,31 +534,60 @@ div[role="radiogroup"] label:hover {color: var(--mdn-text);}
 }
 .mdn-muted {color: var(--mdn-muted); font-size: .8rem;}
 [data-testid="stAlert"] {
-  background: rgba(11, 21, 38, .62);
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
   color: var(--mdn-text);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  padding: .9rem 1rem;
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 [data-testid="stDataFrameResizable"], [data-testid="stDataFrame"] {
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
   overflow: hidden;
-  box-shadow: var(--mdn-elev-soft);
+  box-shadow: var(--shadow-card);
 }
 [data-testid="stSpinner"] {color: var(--mdn-teal);}
+
+/* ---- Expander: a clean rounded "show more" affordance (frosted card) ---- */
 [data-testid="stExpander"] {
-  border: 1px solid var(--mdn-glass-border);
-  border-radius: var(--mdn-radius);
-  background: var(--mdn-panel-soft);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  background: var(--glass-bg);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   overflow: hidden;
+}
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] details > summary {
+  border-radius: var(--radius-card);
+  padding: .7rem 1.05rem;
+  font-weight: 640;
+  color: var(--mdn-text);
+}
+[data-testid="stExpander"] summary:hover {
+  background: rgba(102, 217, 255, .06);
+  color: #fff;
+}
+[data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+  padding: 0 1.05rem 1rem;
 }
 [data-testid="stProgress"] > div > div > div {background: var(--mdn-teal);}
 
+.mdn-legend {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: .85rem 1rem;
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
 .mdn-legend-bar {
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: linear-gradient(90deg, var(--good) 0%, var(--mid) 50%, var(--bad) 100%);
   border: 1px solid rgba(255, 255, 255, .12);
   box-shadow: 0 0 16px rgba(46, 204, 193, .18), 0 4px 12px rgba(0, 0, 0, .3);
@@ -483,9 +595,9 @@ div[role="radiogroup"] label:hover {color: var(--mdn-text);}
 .mdn-legend-row {
   display: flex;
   justify-content: space-between;
-  font-size: .7rem;
+  font-size: .72rem;
   color: var(--mdn-muted);
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 /* ---- Minimal nav caption (3-tab world) ---- */
@@ -536,12 +648,12 @@ div[data-testid="stSegmentedControl"] button[kind="segmented_controlActive"] {
 
 /* ---- Consistent evidence / citation block (source links read as a HUD) ---- */
 .mdn-evidence {
-  border: 1px solid var(--mdn-glass-border);
+  border: 1px solid var(--glass-border);
   border-left: 3px solid var(--mdn-sky);
-  border-radius: var(--mdn-radius);
-  padding: .6rem .8rem;
+  border-radius: var(--radius-card);
+  padding: .75rem .95rem;
   margin: .35rem 0;
-  background: var(--mdn-panel-soft);
+  background: var(--glass-bg-soft);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   font-size: .82rem;
@@ -1098,10 +1210,27 @@ def geo_candidate_detail(row: pd.Series) -> None:
 
 def legend(low_label: str, high_label: str, higher_is_worse: bool) -> None:
     left, right = (low_label, high_label)
-    st.markdown('<div class="mdn-legend-bar"></div>', unsafe_allow_html=True)
     # ramp is green(low)->red(high) when higher_is_worse; flip labels otherwise
     a, b = (left, right) if higher_is_worse else (right, left)
     st.markdown(
-        f'<div class="mdn-legend-row"><span>{a}</span><span>{b}</span></div>',
+        f"""
+        <div class="mdn-legend">
+          <div class="mdn-legend-bar"></div>
+          <div class="mdn-legend-row"><span>{html.escape(str(a))}</span><span>{html.escape(str(b))}</span></div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
+
+
+def floating_card(inner_html: str) -> None:
+    """Render a frosted card tuned to FLOAT over the map (legend / stat overlay).
+
+    Wraps caller-supplied ``inner_html`` in the ``.mdn-float`` surface (more
+    opaque than ``.mdn-glass`` so text stays legible against a bright basemap).
+    The map agent may also apply the ``.mdn-float`` CSS class directly to its
+    own positioned container instead of calling this — both are supported and
+    documented in DESIGN_SYSTEM.md. ``inner_html`` is trusted markup (the caller
+    is responsible for escaping any user/data text it interpolates).
+    """
+    st.markdown(f'<div class="mdn-float">{inner_html}</div>', unsafe_allow_html=True)

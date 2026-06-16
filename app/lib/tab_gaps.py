@@ -11,6 +11,8 @@ file only; new chart/helper needs are LOCAL functions here.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pandas as pd
 import streamlit as st
 
@@ -27,6 +29,36 @@ from .tab_common import (
 
 # How many districts show in the calm default list before "Full ranking".
 _SHORTLIST_N = 6
+
+
+@contextmanager
+def _glass_panel():
+    """Group loose content into one frosted `.mdn-glass` surface.
+
+    Streamlit can't wrap arbitrary widgets in a raw HTML div, so we scope the
+    frosted-card recipe (radius/blur/shadow/padding from the design tokens) onto a
+    bordered ``st.container`` and yield it. Keeps the "where to act next" block
+    reading as one intentional card rather than loose floating elements."""
+    box = st.container(border=True)
+    box.markdown(
+        """
+        <style>
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.cg-glass-marker) {
+          background: var(--glass-bg);
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-card);
+          box-shadow: var(--shadow-card);
+          padding: var(--pad-card);
+          -webkit-backdrop-filter: var(--glass-blur);
+          backdrop-filter: var(--glass-blur);
+        }
+        </style>
+        <div class="cg-glass-marker"></div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with box:
+        yield box
 
 
 def _wow_stat(ranked_all: pd.DataFrame) -> tuple[int, int, float]:
@@ -46,17 +78,19 @@ def _wow_stat(ranked_all: pd.DataFrame) -> tuple[int, int, float]:
 
 
 def _wow_banner(zero_trust: int, n: int, pct: float) -> None:
-    """The single bold anchor of the first glance (danger tone, tokenized)."""
+    """The single bold anchor of the first glance — a cohesive frosted card with a
+    danger accent. Tokenized (radius/shadow/blur from the design system); the
+    underlying stat is computed upstream and never touched here."""
     st.markdown(
-        '<div style="margin:.2rem 0 .55rem;padding:.85rem 1.1rem;border-radius:12px;'
-        'border:1px solid rgba(255,82,82,.34);background:linear-gradient(90deg,'
-        'rgba(255,82,82,.12),rgba(255,82,82,.02));display:flex;align-items:baseline;'
-        'gap:.7rem;flex-wrap:wrap">'
-        '<span style="font-size:2.1rem;font-weight:800;color:#ff8d8d;line-height:1;'
-        'font-variant-numeric:tabular-nums">'
+        '<div class="mdn-glass" style="margin:.1rem 0 .2rem;'
+        'border-color:rgba(255,82,82,.32);'
+        'background:linear-gradient(100deg,rgba(255,82,82,.13),var(--glass-bg) 62%);'
+        'display:flex;align-items:baseline;gap:.9rem;flex-wrap:wrap">'
+        '<span style="font-size:2.3rem;font-weight:820;color:#ff8d8d;line-height:1;'
+        'letter-spacing:-.02em;font-variant-numeric:tabular-nums">'
         f'{zero_trust}/{n}</span>'
-        '<span style="color:#eaf2ff;font-size:1.0rem;line-height:1.35">of the worst '
-        'care-gap districts have <strong>0% trustworthy supply</strong> — '
+        '<span style="color:var(--text);font-size:1.0rem;line-height:1.4;flex:1 1 16rem">'
+        'of the worst care-gap districts have <strong>0% trustworthy supply</strong> — '
         f'{pct:.0f}% of the highest-need places have <em>no</em> facility that '
         'passes automated checks.</span></div>',
         unsafe_allow_html=True,
@@ -106,27 +140,29 @@ def render(districts: pd.DataFrame, specialty: str) -> None:
         tone_each=[_action_tone(top.get("planning_category")), "deploy"],
     )
 
-    # 3) Short ranked list — the calm "where to act next" (full table is opt-in).
-    ui.panel_header(f"Where to act next · top {_SHORTLIST_N}")
+    # 3) Short ranked list — the calm "where to act next", grouped into one frosted
+    #    panel (full table stays opt-in below).
     shortlist = ranked_all.head(_SHORTLIST_N).copy()
-    ev = st.dataframe(
-        _shortlist_table(shortlist, gap_label),
-        hide_index=True,
-        width="stretch",
-        on_select="rerun",
-        selection_mode="single-row",
-        column_config={
-            "Rank": st.column_config.NumberColumn(format="%d"),
-            gap_label: st.column_config.NumberColumn(
-                f"{gap_label} ▲ worse", format="%.2f",
-                help="Higher = more unmet need with less trustworthy supply."),
-            "Trust supply %": st.column_config.ProgressColumn(
-                "Trust supply ▲ better", format="%d%%", min_value=0, max_value=100,
-                help="Share of observed facilities passing trust checks. Higher is better."),
-        },
-    )
-    st.caption("Select a row to inspect a district. Full ranking and the desert "
-               "fingerprints are in the expanders below.")
+    with _glass_panel():
+        ui.panel_header(f"Where to act next · top {_SHORTLIST_N}")
+        ev = st.dataframe(
+            _shortlist_table(shortlist, gap_label),
+            hide_index=True,
+            width="stretch",
+            on_select="rerun",
+            selection_mode="single-row",
+            column_config={
+                "Rank": st.column_config.NumberColumn(format="%d"),
+                gap_label: st.column_config.NumberColumn(
+                    f"{gap_label} ▲ worse", format="%.2f",
+                    help="Higher = more unmet need with less trustworthy supply."),
+                "Trust supply %": st.column_config.ProgressColumn(
+                    "Trust supply ▲ better", format="%d%%", min_value=0, max_value=100,
+                    help="Share of observed facilities passing trust checks. Higher is better."),
+            },
+        )
+        st.caption("Select a row to inspect a district. Full ranking and the desert "
+                   "fingerprints are in the expanders below.")
 
     # 4) Selected district → the one rich, but still calm, drill-down panel.
     selected = _selected_or_first(ev, shortlist)

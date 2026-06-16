@@ -2,13 +2,18 @@
 
 Entry point: ``render(facilities, districts, specialty) -> None``.
 
-Density standard (see DESIGN_SYSTEM.md): the pydeck map is the hero. First glance
-shows only a clean ``tab_intro``, a ≤2-card KPI row, the map + a short legend, and
-the selected district's detail. All controls (view mode, basemap, H3 resolution,
-toggles), the full leaderboard table, the coverage snapshot, and the methodology
-note live behind ``ui.detail(...)`` expanders — depth is opt-in, never forced.
+Layout standard (see DESIGN_SYSTEM.md — VFMatch-style split hero): a LEFT frosted
+orientation/action card (title + ≤2 KPIs + real pill actions) sits beside the
+pydeck map as the CENTERPIECE filling the right column, with a small FLOATING
+legend chip (``.mdn-float`` via ``ui.floating_card``) reading as an overlay on the
+map. All dense controls (view mode, basemap, H3 resolution, toggles), the coverage
+snapshot, the full leaderboard, and the methodology note live behind
+``ui.detail(...)`` expanders — depth is opt-in, never forced. First glance =
+hero card + map + floating legend + selected-district detail.
 """
 from __future__ import annotations
+
+import html
 
 import pandas as pd
 import pydeck as pdk
@@ -66,6 +71,119 @@ def _map_kpis(districts: pd.DataFrame) -> None:
     tones.append("danger" if n_des else "neutral")
     if items:
         ui.kpi_row(items, tone_each=tones)
+
+
+def _hero_actions(worst: pd.Series | None) -> None:
+    """Real, functional pill actions for the left hero card.
+
+    - "Jump to worst district" selects the #1 care-gap district (drives the detail
+      panel below) and re-centers the map on its centroid.
+    - "Toggle facility dots" flips the same session-state key the controls toggle
+      binds to, so the map updates without opening the controls expander.
+    """
+    a1, a2 = st.columns(2)
+    has_worst = worst is not None
+    if a1.button("◎ Jump to worst district", key="hero_jump_worst",
+                 type="primary", use_container_width=True, disabled=not has_worst):
+        # Selecting = remember the district key (the shape ``_district_row`` expects)
+        # so the detail panel resolves to it, and capture its centroid so the map
+        # re-centers on the next run.
+        st.session_state["map_focus_geo"] = {
+            "district_name": worst.get("district_name"),
+            "state_ut": worst.get("state_ut"),
+        }
+        lat = pd.to_numeric(worst.get("district_latitude"), errors="coerce")
+        lon = pd.to_numeric(worst.get("district_longitude"), errors="coerce")
+        if pd.notna(lat) and pd.notna(lon):
+            st.session_state["map_focus_view"] = {
+                "latitude": float(lat), "longitude": float(lon), "zoom": 6.4}
+        st.rerun()
+
+    dots_on = bool(st.session_state.get("map_dots_on", False))
+    if a2.button("● Hide facility dots" if dots_on else "○ Show facility dots",
+                 key="hero_toggle_dots", use_container_width=True):
+        # Stash the desired state on a plain (non-widget) key; the controls toggle
+        # picks it up as its default on the next run, avoiding the "set state for an
+        # instantiated widget" exception that binding + writing one key would cause.
+        st.session_state["map_dots_pending"] = not dots_on
+        st.rerun()
+
+
+def _left_hero(districts: pd.DataFrame) -> None:
+    """The frosted LEFT orientation/action card: context line, 2 KPIs, pill actions.
+
+    Streamlit can't wrap live widgets (KPI cards, buttons) in a raw HTML div, so
+    the frosted-card recipe is scoped onto a bordered ``st.container`` via a marker
+    + ``:has()`` selector (the same idiom the sibling tabs use), keeping the left
+    column reading as ONE intentional orientation card rather than loose elements.
+    """
+    worst = _worst_district(districts)
+    box = st.container(border=True)
+    box.markdown(
+        """
+        <style>
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.map-hero-marker) {
+          background: var(--glass-bg);
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-card);
+          box-shadow: var(--shadow-card);
+          padding: var(--pad-card);
+          -webkit-backdrop-filter: var(--glass-blur);
+          backdrop-filter: var(--glass-blur);
+        }
+        </style>
+        <div class="map-hero-marker"></div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with box:
+        st.markdown(
+            '<div class="mdn-panel-h">Orientation</div>'
+            '<div class="mdn-muted" style="margin:-.15rem 0 .55rem;line-height:1.35">'
+            'Every district scored by care gap — even zero-facility deserts that '
+            'facility-count maps miss. Pick a district on the map, or jump to the '
+            'worst one to start.</div>',
+            unsafe_allow_html=True,
+        )
+        _map_kpis(districts)
+        st.markdown('<div style="height:.35rem"></div>', unsafe_allow_html=True)
+        _hero_actions(worst)
+        st.caption("Need a recommended plan or the AI walkthrough? Open the "
+                   "**Care gaps** and **Copilot** tabs above.")
+
+
+def _floating_legend(view_mode: str, n_plotted: int, filtered_n: int,
+                     total_n: int) -> None:
+    """The color-ramp legend rendered as a floating chip (``.mdn-float``) over the map.
+
+    Streamlit's flow makes true absolute-over-canvas positioning brittle, so per
+    DESIGN_SYSTEM.md this acceptable compromise sits directly above the map within
+    the right column — styled as a compact floating chip, not a full-width bar.
+    """
+    if view_mode == "Medical deserts":
+        a, b = "Medical desert", "Better coverage"  # ramp red(worse)->green
+        sub = f"{n_plotted:,} districts mapped · click a hex for its breakdown"
+    else:
+        lo_worse = config.METRICS[config.DEFAULT_METRIC][2]
+        a, b = ("Higher", "Lower") if lo_worse else ("Lower", "Higher")
+        excluded = total_n - filtered_n
+        sub = (f"{filtered_n:,} of {total_n:,} facilities mapped "
+               f"({excluded:,} excluded) · click a hex or dot")
+    inner = (
+        '<div style="display:flex;align-items:center;gap:.65rem">'
+        '<span style="font-size:.66rem;font-weight:760;letter-spacing:.08em;'
+        'text-transform:uppercase;color:var(--mdn-muted);white-space:nowrap">Legend</span>'
+        '<span style="flex:1;height:8px;border-radius:999px;'
+        'background:linear-gradient(90deg,var(--bad) 0%,var(--mid) 50%,var(--good) 100%);'
+        'border:1px solid rgba(255,255,255,.12);min-width:90px"></span>'
+        '</div>'
+        '<div style="display:flex;justify-content:space-between;font-size:.7rem;'
+        f'color:var(--mdn-muted);margin-top:5px"><span>{html.escape(a)}</span>'
+        f'<span>{html.escape(b)}</span></div>'
+        '<div style="font-size:.7rem;color:var(--mdn-dim);margin-top:.45rem;'
+        f'line-height:1.3">{html.escape(sub)}</div>'
+    )
+    ui.floating_card(inner)
 
 
 def _build_layers(deserts, cells, points, show_points) -> list:
@@ -151,12 +269,16 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
         f"{specialty} lens · trust-weighted demand, supply, and uncertainty",
     )
 
-    # ---- First glance: ≤2 decision-relevant KPIs ----
-    _map_kpis(districts)
-
     # ---- All controls behind one detail expander (kept off the first glance).
     # Expander bodies still execute every run, so the widget values below are always
-    # resolved — collapsing only hides them, it does not skip them. ----
+    # resolved — collapsing only hides them, it does not skip them. The hero
+    # "facility dots" pill drives the toggle via the ``map_dots_*`` keys below. ----
+    # The hero "facility dots" pill stashes its intent on a plain key; consume it
+    # here (before the widget instantiates) so the toggle's default reflects it.
+    if "map_dots_pending" in st.session_state:
+        st.session_state["map_dots_on"] = st.session_state.pop("map_dots_pending")
+    dots_default = bool(st.session_state.get("map_dots_on", False))
+
     with ui.detail("Map controls"):
         cc1, cc2 = st.columns([1.4, 1.0])
         with cc1:
@@ -165,7 +287,7 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
                 default="Medical deserts", key="map_view_mode",
                 width="stretch") or "Medical deserts"
         with cc2:
-            show_points = st.toggle("Facility dots", value=(view_mode == "Facility coverage"))
+            show_points = st.toggle("Facility dots", value=dots_default)
         oc1, oc2, oc3 = st.columns(3)
         basemap = oc1.selectbox("Basemap style", list(config.MAP_STYLES.keys()),
                                 index=list(config.MAP_STYLES).index(config.DEFAULT_MAP_STYLE))
@@ -174,18 +296,28 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
         include_geo_flagged = oc3.toggle("Include flagged-geo facilities", value=False,
                                          help="Impossible / out-of-India coordinates")
 
+    # Keep the plain key in sync with the live toggle so the hero pill label is
+    # accurate even when the user flips the toggle directly in the expander.
+    st.session_state["map_dots_on"] = bool(show_points)
     filtered = data.filter_facilities(facilities, specialty, include_geo_flagged)
     deserts = data.district_hexes(districts, resolution) if view_mode == "Medical deserts" else None
     cells = data.hexbin(filtered, config.DEFAULT_METRIC, resolution) if view_mode == "Facility coverage" else None
     points = data.facility_points(filtered) if show_points else None
 
-    # ---- The hero: the map, full-width, with a short legend underneath ----
-    view = pdk.ViewState(**config.INDIA_VIEW)
     layers = _build_layers(deserts, cells, points, show_points)
-
     if not layers:
-        st.info("No mappable data for this selection.")
+        # Still show the orientation card so the tab never collapses to a bare info box.
+        hcol, mcol = st.columns([1, 2.4])
+        with hcol:
+            _left_hero(districts)
+        with mcol:
+            st.info("No mappable data for this selection.")
         return
+
+    # ---- Re-center the map when the hero "jump to worst district" was used; else
+    # the calm national overview. Consume the one-shot focus view after applying it. ----
+    focus_view = st.session_state.pop("map_focus_view", None)
+    view = pdk.ViewState(**(focus_view if focus_view else config.INDIA_VIEW))
 
     tooltip = {"html": "{tip}",
                "style": {"backgroundColor": "#07111f", "color": "#eaf2ff",
@@ -194,29 +326,31 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
                          "padding": "8px"}}
     deck = pdk.Deck(layers=layers, initial_view_state=view,
                     map_style=config.MAP_STYLES[basemap], tooltip=tooltip)
-    event = st.pydeck_chart(deck, height=600, key="map",
-                            on_select="rerun", selection_mode="single-object")
 
-    # ---- Short legend + one-line orientation (the only inline explainer) ----
-    if view_mode == "Medical deserts":
-        ui.legend("Better coverage", "Medical desert", higher_is_worse=True)
+    # ===== SPLIT HERO: left orientation/action card · right map (centerpiece) =====
+    hero_left, hero_right = st.columns([1, 2.4])
+    with hero_left:
+        _left_hero(districts)
+    with hero_right:
+        # Floating legend chip reads as an overlay sitting just above the map canvas.
         n_plotted = 0 if deserts is None else len(deserts)
-        st.caption(f"{n_plotted:,} districts · green = better coverage, red = wider care gap · "
-                   "click a **hex** for the district breakdown, a **dot** for facility evidence.")
-    else:
-        ui.legend("Lower", "Higher", config.METRICS[config.DEFAULT_METRIC][2])
-        total = len(facilities)
-        st.caption(f"{len(filtered):,} of {total:,} facilities mapped "
-                   f"({total - len(filtered):,} excluded) · click a **hex** for the district "
-                   "breakdown, a **dot** for facility evidence.")
+        _floating_legend(view_mode, n_plotted, len(filtered), len(facilities))
+        event = st.pydeck_chart(deck, height=620, key="map",
+                                on_select="rerun", selection_mode="single-object")
 
-    # ---- Selected detail: facility card or district drill-down (opens on an answer) ----
+    # ---- Selected detail: facility card or district drill-down (opens on an answer).
+    # A click on the map wins; otherwise the hero "jump" focus; otherwise the worst. ----
     picked_f = _picked_facility(event)
     picked_d = _picked_district(event)
     if picked_f:
+        st.session_state.pop("map_focus_geo", None)
         ui.facility_card(picked_f)
     else:
         row = _district_row(districts, picked_d) if picked_d else None
+        if row is None:
+            focus_geo = st.session_state.get("map_focus_geo")
+            if focus_geo:
+                row = _district_row(districts, focus_geo)
         if row is None:
             row = _worst_district(districts)
             if row is not None:

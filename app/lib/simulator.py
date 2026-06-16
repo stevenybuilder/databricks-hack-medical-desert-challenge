@@ -333,6 +333,37 @@ def simulate_interventions(
 # --------------------------------------------------------------------------- #
 # Streamlit view
 # --------------------------------------------------------------------------- #
+def _glass_panel():
+    """Group loose content into one frosted `.mdn-glass` surface (design-system
+    recipe scoped onto a bordered ``st.container``). Local helper — styling only."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cm():
+        box = st.container(border=True)
+        box.markdown(
+            """
+            <style>
+            div[data-testid="stVerticalBlockBorderWrapper"]:has(.sim-glass-marker) {
+              background: var(--glass-bg);
+              border: 1px solid var(--glass-border);
+              border-radius: var(--radius-card);
+              box-shadow: var(--shadow-card);
+              padding: var(--pad-card);
+              -webkit-backdrop-filter: var(--glass-blur);
+              backdrop-filter: var(--glass-blur);
+            }
+            </style>
+            <div class="sim-glass-marker"></div>
+            """,
+            unsafe_allow_html=True,
+        )
+        with box:
+            yield box
+
+    return _cm()
+
+
 def _default_district_index(districts: pd.DataFrame) -> int:
     """Pick a high-care-gap district that also has several observed facilities."""
     d = districts.copy()
@@ -406,11 +437,14 @@ def render_simulator(
         else:  # pragma: no cover
             st.info(f"{chip}: {rec}")
 
-        # ---- levers ----
-        l1, l2, l3 = st.columns(3)
-        mobile = l1.slider("Add mobile clinics", 0, 5, 1, key="sim_mobile")
-        cap_pct = l2.slider("Increase provider capacity (%)", 0, 50, 20, step=5, key="sim_cap")
-        teleh = l3.slider("Telehealth adoption", 0.0, 1.0, 0.3, step=0.1, key="sim_teleh")
+        # ---- levers (grouped into one frosted control panel) ----
+        with _glass_panel():
+            if ui is not None:
+                ui.panel_header("Move the levers")
+            l1, l2, l3 = st.columns(3)
+            mobile = l1.slider("Add mobile clinics", 0, 5, 1, key="sim_mobile")
+            cap_pct = l2.slider("Increase provider capacity (%)", 0, 50, 20, step=5, key="sim_cap")
+            teleh = l3.slider("Telehealth adoption", 0.0, 1.0, 0.3, step=0.1, key="sim_teleh")
 
         # ---- supply bands ----
         st.markdown(

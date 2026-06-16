@@ -32,20 +32,39 @@ CHIPS = [
 # — same font, same text/muted/accent colors. See DESIGN_SYSTEM.md.
 _CSS = """
 <style>
+/* Hero greeting: confident display type with calm, airy spacing above the chips. */
 .cp-greet { font-family: var(--mdn-font); font-size: var(--fs-display); font-weight:760;
-            color: var(--text); line-height:1.15; margin:.2rem 0 .1rem; }
+            color: var(--text); line-height:1.15; letter-spacing:-.015em;
+            margin:.5rem 0 .25rem; }
 .cp-greet .sub { color: var(--muted); }
-.cp-hint { color: var(--muted); font-size: var(--fs-body); margin-bottom:1rem; }
-/* Gemini-style pill chips (scoped to copilot buttons via the wrapper) */
+.cp-hint { color: var(--muted); font-size: var(--fs-body); line-height:1.45;
+           margin-bottom:1.1rem; }
+/* Gemini-style pill chips — frosted, rounded-full, with a clear hover lift.
+   Scoped to copilot chip buttons via the .cp-chips wrapper. */
+.cp-chips { margin-bottom:.4rem; }
 .cp-chips div[data-testid="stButton"] > button {
-  border-radius:999px; border:1px solid var(--mdn-glass-border);
-  background:linear-gradient(180deg, rgba(18,28,46,.9), rgba(11,19,33,.9));
+  border-radius: var(--radius-pill); border:1px solid var(--glass-border);
+  background:linear-gradient(180deg, rgba(20,28,44,.82), rgba(13,20,34,.74));
   color: var(--text); font-family: var(--mdn-font); font-weight:600; text-align:left;
-  padding:.6rem 1rem; box-shadow: var(--mdn-elev-1); transition:all .15s ease;
+  padding:.7rem 1.15rem; min-height:48px; box-shadow: var(--mdn-elev-1);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  transition:all .15s ease;
 }
 .cp-chips div[data-testid="stButton"] > button:hover {
   border-color: var(--info); transform:translateY(-1px);
-  box-shadow: var(--mdn-elev-2);
+  box-shadow: var(--mdn-elev-2); color:#fff;
+}
+/* Inline Save plan / Shortlist action row — pills already global; keep it tight
+   and airy under the grounded answer. */
+.cp-actions { margin-top:.35rem; }
+/* Methodology method-cards (explain mode): frosted glass instead of the plain
+   bordered container, so they read native to the re-skinned Copilot. */
+.cp-explain div[data-testid="stVerticalBlockBorderWrapper"]:has(.cp-method-marker) {
+  background: var(--glass-bg-soft);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
 }
 </style>
 """
@@ -132,6 +151,7 @@ def _save_affordance(geography_id: str, label: str, *, assumptions: dict | None 
     """
     if decisions is None or not geography_id:
         return
+    st.markdown('<div class="cp-actions"></div>', unsafe_allow_html=True)
     c1, c2, _ = st.columns([1.1, 1.1, 2.2])
     with c1:
         if st.button("💾 Save plan", key=f"cp_save_{key}", use_container_width=True):
@@ -230,10 +250,13 @@ def _mode_explain(facilities, districts, specialty):
         ("🗺️ Real vs data-poor", "planning_category separates verifiable deserts from data-poor "
          "regions, so a low number from missing data never masquerades as good coverage."),
     ]
+    st.markdown('<div class="cp-explain">', unsafe_allow_html=True)
     for title, body in items:
         with st.container(border=True):
+            st.markdown('<div class="cp-method-marker"></div>', unsafe_allow_html=True)
             st.markdown(f"**{title}**")
             st.caption(body)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 _MODES = {

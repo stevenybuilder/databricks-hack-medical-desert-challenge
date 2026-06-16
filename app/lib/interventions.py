@@ -503,6 +503,37 @@ def _tone_for(intervention: str, not_recommended: bool) -> str:
     }.get(intervention, "info")
 
 
+def _glass_panel(st):
+    """Group loose content into one frosted `.mdn-glass` surface (design-system
+    recipe scoped onto a bordered ``st.container``). Local helper — styling only."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cm():
+        box = st.container(border=True)
+        box.markdown(
+            """
+            <style>
+            div[data-testid="stVerticalBlockBorderWrapper"]:has(.iv-glass-marker) {
+              background: var(--glass-bg);
+              border: 1px solid var(--glass-border);
+              border-radius: var(--radius-card);
+              box-shadow: var(--shadow-card);
+              padding: var(--pad-card);
+              -webkit-backdrop-filter: var(--glass-blur);
+              backdrop-filter: var(--glass-blur);
+            }
+            </style>
+            <div class="iv-glass-marker"></div>
+            """,
+            unsafe_allow_html=True,
+        )
+        with box:
+            yield box
+
+    return _cm()
+
+
 def render_interventions(
     facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str,
     *, embedded: bool = False,
@@ -613,16 +644,18 @@ def render_interventions(
         tone=_tone_for(best["intervention"], bool(best["not_recommended_flag"])),
     )
 
-    # Reason bullets (doc "Output example" idiom) from the firing signals.
-    st.markdown("**Reason:**")
-    st.markdown(best["rationale"])
-    chips = [s.strip() for s in str(best["trigger_signals"]).split("|") if s.strip()]
-    ui.reason_chips(chips)
+    # Reason bullets (doc "Output example" idiom) from the firing signals, grouped
+    # with the headline probabilities into one frosted answer card.
+    with _glass_panel(st):
+        st.markdown("**Reason:**")
+        st.markdown(best["rationale"])
+        chips = [s.strip() for s in str(best["trigger_signals"]).split("|") if s.strip()]
+        ui.reason_chips(chips)
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("P(addresses need)", f"{_num(best.get('p_addresses_need')):.2f}")
-    m2.metric("P(wrong)", f"{_num(best.get('p_wrong')):.2f}")
-    m3.metric("Expected access gain", f"{_num(best.get('expected_access_gain')):.0f}")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("P(addresses need)", f"{_num(best.get('p_addresses_need')):.2f}")
+        m2.metric("P(wrong)", f"{_num(best.get('p_wrong')):.2f}")
+        m3.metric("Expected access gain", f"{_num(best.get('expected_access_gain')):.0f}")
 
     # Not-recommended callout (kept visible — it is a safety signal).
     flagged = detail[detail["not_recommended_flag"] == True]  # noqa: E712
