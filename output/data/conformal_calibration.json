@@ -1,0 +1,17 @@
+{
+  "alpha": 0.1,
+  "target_coverage": 0.9,
+  "q_hat": 0.0802,
+  "stale_q_hat": 0.1302,
+  "empirical_coverage_on_proxy": 0.9183,
+  "n_calibration": 2008,
+  "n_eval_valid": 1996,
+  "n_total": 10077,
+  "method": "split_conformal_proxy",
+  "nonconformity": "s = 1 - validity_posterior; valid in set iff s <= q_hat",
+  "calibration_target": "trustworthy_supply_signal (PROXY pseudo-label, not human-verified gold)",
+  "seed": 13,
+  "cal_fraction": 0.5,
+  "provisional": true,
+  "notes": "Calibrated against an AUTOMATED PROXY pseudo-label, not human-verified ground truth. Coverage is coverage of the proxy-valid class, not measured accuracy. Replace the pseudo-label with verified gold/silver labels to get a genuine calibration; the split-conformal machinery is unchanged."
+}

@@ -1,9 +1,9 @@
 [theme]
-base = "light"
-primaryColor = "#FF3621"          # Databricks accent
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f4f6fa"
-textColor = "#0f172a"
+base = "dark"
+primaryColor = "#66d9ff"
+backgroundColor = "#05080f"
+secondaryBackgroundColor = "#080f1a"
+textColor = "#eaf2ff"
 font = "sans serif"
 
 [server]

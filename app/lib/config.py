@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 APP_TITLE = "Medical Desert Navigator"
-APP_TAGLINE = "Where is your specialty needed most — and which facilities can you trust?"
+APP_TAGLINE = "Trust-weighted care gaps across India"
 
 # --- Data location -----------------------------------------------------------
 # Default to the project's pre-cleaned output; override with DATA_DIR env var.
@@ -35,6 +35,14 @@ def golden_facility_seed_report_path() -> Path:
 
 def facility_prediction_model_report_path() -> Path:
     return data_dir() / "facility_prediction_model_report.json"
+
+
+def decision_category_volume_summary_path() -> Path:
+    return data_dir() / "decision_category_volume_summary.csv"
+
+
+def statistical_decision_policy_report_path() -> Path:
+    return data_dir() / "statistical_decision_policy_report.json"
 
 
 def active_facility_queue_path() -> Path:
@@ -86,12 +94,12 @@ MAP_STYLES = {
     "Light (Positron)": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
     "Dark Matter": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
 }
-DEFAULT_MAP_STYLE = "Voyager"
+DEFAULT_MAP_STYLE = "Dark Matter"
 MAP_STYLE = MAP_STYLES[DEFAULT_MAP_STYLE]  # back-compat default
 
 # 3-stop sequential ramp (RGB): good -> mid -> bad. A yellow midpoint avoids the
 # muddy brown you get interpolating green->red directly.
-COLOR_GOOD = (38, 166, 154)   # teal
-COLOR_MID = (255, 202, 58)    # amber
-COLOR_BAD = (229, 57, 53)     # red
-HEX_ALPHA = 205
+COLOR_GOOD = (46, 204, 193)   # luminous teal
+COLOR_MID = (255, 190, 72)    # amber
+COLOR_BAD = (255, 82, 82)     # red
+HEX_ALPHA = 190

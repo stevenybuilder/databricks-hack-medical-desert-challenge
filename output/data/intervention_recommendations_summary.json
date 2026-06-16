@@ -1,0 +1,60 @@
+{
+  "policy_version": "intervention-policy-v1",
+  "generated_from": {
+    "district_table": "/Users/stevenyang/Documents/databricks_hackathon/output/data/district_health_facility_cleaned.csv",
+    "district_rows": 494,
+    "facility_rows": 10077
+  },
+  "row_counts": {
+    "recommendation_rows": 3458,
+    "districts_scored": 491,
+    "candidates_per_district": 7,
+    "nan_ev_rows": 0
+  },
+  "top_intervention_counts": {
+    "Verify-first data / records campaign": 312,
+    "PM-JAY / insurance enrollment support": 175,
+    "Mobile primary care clinic": 7
+  },
+  "intervention_counts_all_ranks": {
+    "Verify-first data / records campaign": 494,
+    "PM-JAY / insurance enrollment support": 494,
+    "Community health worker outreach": 494,
+    "Mobile primary care clinic": 494,
+    "Pharmacy-based chronic care screening": 494,
+    "OB referral network + prenatal telehealth & transport": 494,
+    "Telehealth-first program": 494
+  },
+  "top_recommendation_confidence_counts": {
+    "Low": 267,
+    "Medium": 224,
+    "High": 3
+  },
+  "telehealth": {
+    "rows": 494,
+    "flagged_not_recommended": 414,
+    "note": "Telehealth is a low-confidence default: broadband and elderly-share signals are NOT in the dataset, so the doc's penalty cannot be applied."
+  },
+  "ev_score_summary": {
+    "min": -0.5276,
+    "median": 0.0439,
+    "max": 1.0504
+  },
+  "methodology_notes": [
+    "EV = P(addresses_need) * benefit - P(wrong) * harm - operating_cost.",
+    "benefit scales with health_need_score and the relevant NFHS/supply need gap.",
+    "P(wrong) scales with district_uncertainty_level, small observed samples, high needs_human_review_rate, high critical_supply_gap_rate, and wide supply CIs.",
+    "operating_cost and harm come from per-intervention priors (transparent constants).",
+    "confidence (Low/Medium/High) is tied to evidence strength + fit, not measured accuracy.",
+    "Missing-signal substitutions are labeled as PROXIES in the rationale; the doc's broadband and elderly-share signals do not exist in this dataset."
+  ],
+  "intervention_to_signals": {
+    "Mobile primary care clinic": "real_desert_candidate + low trustworthy_supply_rate + low capacity_observed_rate",
+    "OB referral network + prenatal telehealth & transport": "low institutional_birth_5y_pct + high anaemia + low maternity_signal_rate",
+    "Pharmacy-based chronic care screening": "high BP/blood-sugar pct + low ncd/diagnostic_signal_rate",
+    "PM-JAY / insurance enrollment support": "low hh_member_covered_health_insurance_pct + referral_or_capacity_candidate",
+    "Community health worker outreach": "high needs_human_review_rate + low contact_evidence_rate",
+    "Verify-first data / records campaign": "phantom_desert_or_verification_gap | supply_record_quality_problem",
+    "Telehealth-first program": "LOW-confidence default; broadband/elderly not in dataset"
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "current_scope": "The current system is proxy decision support. It quantifies evidence quality and finite-row uncertainty, but it does not claim causal impact or measured supervised accuracy until gold/silver labels exist.",
+  "decision_rules_already_in_pipeline": [
+    {
+      "decision": "needs_human_review",
+      "rule": "data_readiness_score < 0.65 OR semantic_data_quality_score < 0.45 OR critical_supply_gap_flag OR join_confidence < 0.80 OR geo_quality != plausible OR capacity/doctor outlier OR claim_field_count < 2",
+      "statistical_role": "High-recall uncertainty gate; routes weak or conflicting rows to review."
+    },
+    {
+      "decision": "passed_proxy_checks",
+      "rule": "data_readiness_score >= 0.80 AND join_confidence >= 0.80 AND geo_quality == plausible AND has_source_urls AND claim_field_count >= 3 AND supply_data_confidence_score >= 0.65 AND no capacity/doctor outlier AND no invalid recency",
+      "statistical_role": "Proxy precision gate; not a verified facility label."
+    },
+    {
+      "decision": "contradicted_or_geo_invalid",
+      "rule": "outside-India or far-from-PIN coordinates, or extreme capacity/doctor outlier.",
+      "statistical_role": "Conflict gate; excludes rows from training and sends them to location/source review."
+    },
+    {
+      "decision": "real_desert_candidate",
+      "rule": "care_gap_score >= 0.70, top-quartile health_need_score, and <= 2 trustworthy supply rows.",
+      "statistical_role": "High-need, low-trustworthy-supply planning segment; still needs sensitivity checks."
+    }
+  ],
+  "concepts": [
+    {
+      "concept": "Wilson confidence intervals",
+      "use_now": true,
+      "where_applied": "District/facility/category rates, especially small district samples.",
+      "why_relevant": "Better behaved than naive normal intervals for bounded proportions."
+    },
+    {
+      "concept": "Bayesian beta-binomial rates",
+      "use_now": true,
+      "where_applied": "Category-volume report uses Jeffreys Beta(0.5, 0.5) posterior intervals.",
+      "why_relevant": "Gives stable rate uncertainty for rare categories without pretending labels are truth."
+    },
+    {
+      "concept": "Bayesian source-agreement update",
+      "use_now": true,
+      "where_applied": "Proxy trust bands for source corroboration.",
+      "why_relevant": "Use internal evidence as prior and update with likelihood-style evidence from HFR/PM-JAY, Overture/OSM, India Post/admin agreement, and geocoder metadata.",
+      "formula": "logit(posterior_proxy) = logit(prior_proxy) + sum(log_likelihood_ratios) - conflict_penalties"
+    },
+    {
+      "concept": "Expected utility / expected value",
+      "use_now": true,
+      "where_applied": "Recommend versus verify-first versus abstain actions.",
+      "why_relevant": "A deployment decision should depend on benefit, harm/cost, and uncertainty, not probability alone.",
+      "formula": "EV(action) = P(correct) * benefit - P(wrong) * harm - operating_cost"
+    },
+    {
+      "concept": "Value of information",
+      "use_now": true,
+      "where_applied": "Active uncertainty queues.",
+      "why_relevant": "Ranks rows where one more source check is likely to change the decision.",
+      "formula": "VOI = expected_utility_after_review - expected_utility_before_review - review_cost"
+    },
+    {
+      "concept": "Calibration, Brier score, log loss, coverage at thresholds",
+      "use_now": false,
+      "where_applied": "Supervised model report after gold/silver labels exist.",
+      "why_relevant": "Only valid when predictions can be evaluated against held-out corroborated labels."
+    },
+    {
+      "concept": "Hierarchical shrinkage",
+      "use_now": true,
+      "where_applied": "Capacity and doctor-count estimates.",
+      "why_relevant": "Sparse cohorts borrow strength from broader facility/operator/type groups."
+    },
+    {
+      "concept": "Markov chains",
+      "use_now": false,
+      "where_applied": "Future repeated observations of facility status over time.",
+      "why_relevant": "The current dataset is cross-sectional, so there are no observed transition probabilities."
+    },
+    {
+      "concept": "Regime switching",
+      "use_now": false,
+      "where_applied": "Future time-series data with policy, outbreak, or seasonal regimes.",
+      "why_relevant": "Not identifiable from the current one-time snapshot."
+    },
+    {
+      "concept": "Backdoor adjustment / causal inference",
+      "use_now": false,
+      "where_applied": "Future evaluation of whether sending a doctor caused better outcomes.",
+      "why_relevant": "Current rankings are predictive/decision-support scores. Causal claims would need outcomes and adjustment for baseline burden, existing supply, rurality, poverty, travel time, state effects, data quality, and volunteer-selection bias."
+    }
+  ],
+  "expected_value_policy": {
+    "probability_source_now": "proxy trust/confidence band midpoint plus evidence tier and conflict gates",
+    "probability_source_after_labels": "calibrated supervised probabilities on held-out gold/silver labels",
+    "action_policy": [
+      {
+        "action": "recommend_or_deploy",
+        "condition": "High expected utility, no conflict flag, robust district need/gap, and sufficient evidence tier."
+      },
+      {
+        "action": "verify_first",
+        "condition": "Potential impact is high but source/geo uncertainty can change the decision."
+      },
+      {
+        "action": "enrich_sources",
+        "condition": "Missingness or source gaps dominate the uncertainty score."
+      },
+      {
+        "action": "abstain",
+        "condition": "Conflict, bronze-only evidence for a high-stakes action, or model confidence below policy threshold."
+      }
+    ]
+  }
+}

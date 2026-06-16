@@ -14,19 +14,19 @@
     "raw_facility_duplicate_unique_id_rows": 11,
     "district_rows": 494,
     "unmatched_pincode_district_groups": 60,
-    "facility_needs_human_review_rows": 3029,
-    "facility_trustworthy_supply_rows": 7046,
+    "facility_needs_human_review_rows": 7812,
+    "facility_trustworthy_supply_rows": 4004,
     "district_planning_category_counts": {
-      "mixed_or_monitor": 279,
-      "referral_or_capacity_candidate": 99,
-      "supply_record_quality_problem": 93,
-      "phantom_desert_or_verification_gap": 15,
-      "real_desert_candidate": 8
+      "mixed_or_monitor": 230,
+      "referral_or_capacity_candidate": 90,
+      "supply_record_quality_problem": 89,
+      "phantom_desert_or_verification_gap": 54,
+      "real_desert_candidate": 31
     },
     "district_uncertainty_counts": {
-      "lower": 209,
-      "higher": 180,
-      "medium": 105
+      "medium": 275,
+      "higher": 215,
+      "lower": 4
     },
     "top_care_gap_districts": [
       {

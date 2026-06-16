@@ -234,6 +234,34 @@ geocoder location does not by itself prove the address exists. Therefore the app
 must show provider metadata and admin-geography agreement rather than just a green
 "verified" badge.
 
+Observed 2026-06-15 Google Maps batch:
+
+| Outcome | Rows | Share of 138-row geocoder batch |
+|---|---:|---:|
+| API `OK` responses | 127 | 92.0% |
+| `accept_coordinate_candidate` | 14 | 10.1% |
+| `neighborhood_candidate_h3_only` | 7 | 5.1% |
+| `partial_match_review` | 99 | 71.7% |
+| `pincode_mismatch_review` | 7 | 5.1% |
+| `api_request_denied_review` | 11 | 8.0% |
+
+This means Google produced some useful high-confidence fixes, but the largest
+value was separating true coordinate candidates from rows that need review. The
+fuzzy reconciliation stage reduced first-pass Google calls from 250 candidates
+to 138 ready rows, avoiding 112 calls (44.8%) that had admin geography conflicts
+or weak joins before provider spend.
+
+The sanitized results table is:
+
+```text
+workspace.default.hackathon_google_geocoding_results
+```
+
+Local raw Google outputs are ignored by git because provider responses can
+contain row-level facility/address evidence. The tracked SQL file is schema-only;
+row-level load SQL is generated locally as
+`output/sql/google_geocoding_results_generated.sql`.
+
 ## Quality rules
 
 | Geocoder result | Action |
