@@ -158,7 +158,7 @@ def _gap_is_real(row) -> str:
     """Honest 'is the care gap genuinely there?' tier — NOT a supply-data score.
 
     For a real-desert candidate the gap is evidenced by the NEED side (NFHS) plus
-    the *absence* of trustworthy supply. A zero-facility desert with a fully
+    the *absence* of confirmed provider evidence. A zero-facility desert with a fully
     measured NFHS survey is the strongest case — the absence of facilities IS the
     signal — so it reads High, never 0.00. Derived only from columns that exist:
       • planning_category == real_desert_candidate (need + low supply already met)
@@ -183,7 +183,7 @@ def _supply_evidence(row) -> str:
     """Honest 'how much trustworthy facility evidence backs the supply side?'.
 
     A zero-facility desert has NONE — and that is the point, so we say so plainly
-    instead of rendering 0.00. Otherwise we report the trustworthy-supply rate
+    instead of rendering 0.00. Otherwise we report the provider hard-check pass rate
     over the (small) observed sample as an Observed/Estimated tier.
     Columns: zero_facility_desert, observed_facility_rows, trustworthy_supply_rate.
     """
@@ -197,8 +197,8 @@ def _supply_evidence(row) -> str:
     tsr_v = 0.0 if pd.isna(tsr) else float(tsr)
     n_word = f"{obs_n} record" + ("s" if obs_n != 1 else "")
     if obs_n < 8:
-        return f"Thin — {n_word}, {tsr_v*100:.0f}% trustworthy"
-    return f"Observed — {n_word}, {tsr_v*100:.0f}% trustworthy"
+        return f"Thin — {n_word}, {tsr_v*100:.0f}% pass checks"
+    return f"Observed — {n_word}, {tsr_v*100:.0f}% pass checks"
 
 
 def _mode_verifiable_deserts(facilities, districts, specialty):
@@ -229,15 +229,15 @@ def _mode_verifiable_deserts(facilities, districts, specialty):
         column_config={
             "Care gap": st.column_config.NumberColumn(
                 "Care gap", format="%.2f",
-                help="0–1 composite: NFHS need + supply scarcity + low trustworthy supply."),
+                help="0–1 composite: NFHS need + supply scarcity + weak provider evidence."),
             "Gap is real": st.column_config.TextColumn(
                 "Gap is real",
                 help="Confidence the care gap genuinely exists — evidenced by NFHS "
-                     "need and the absence of trustworthy supply. For a zero-facility "
+                     "need and the absence of confirmed provider evidence. For a zero-facility "
                      "desert this is High: the absence of facilities IS the signal."),
             "Supply evidence": st.column_config.TextColumn(
                 "Supply evidence", width="medium",
-                help="How much trustworthy facility evidence backs the supply side. "
+                help="How much provider evidence backs the supply side. "
                      "Zero-facility deserts have none on record — that is the gap, "
                      "not a low-confidence score."),
         },

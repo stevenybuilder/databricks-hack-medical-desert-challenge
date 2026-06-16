@@ -528,7 +528,7 @@ def _map_tooltip() -> dict:
 
 
 def _enrich_desert_tips(deserts: pd.DataFrame) -> pd.DataFrame:
-    """Augment the per-district hover ``tip`` with action, trust-supply %, uncertainty.
+    """Augment the per-district hover ``tip`` with action, provider trust, uncertainty.
 
     Renders a small nested card. Each extra row is added ONLY when the source field is
     present/usable on the layer data — absent fields are omitted, never fabricated.
@@ -559,7 +559,10 @@ def _enrich_desert_tips(deserts: pd.DataFrame) -> pd.DataFrame:
                     f'Action</span> <b style="color:{col}">{html.escape(lbl)}</b></div>'
                 )
         # Provider-trust %, when present and non-NaN.
-        tsr = pd.to_numeric(r.get("trustworthy_supply_rate"), errors="coerce")
+        tsr = pd.to_numeric(
+            r.get("provider_trust_score", r.get("trustworthy_supply_rate")),
+            errors="coerce",
+        )
         if pd.notna(tsr):
             parts.append(
                 f'<div style="font-size:11px;color:#97a8c2">Provider trust '
@@ -666,7 +669,7 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
     # E6: enrich the per-district hover tip with action / trust-supply / uncertainty
     # by joining the extra columns from the source districts table onto the layer.
     if deserts is not None and not deserts.empty:
-        extra_cols = [c for c in ("planning_category", "district_uncertainty_level")
+        extra_cols = [c for c in ("planning_category", "district_uncertainty_level", "provider_trust_score")
                       if c in scoped_districts.columns]
         if extra_cols:
             merge_cols = ["district_name", "state_ut", *extra_cols]

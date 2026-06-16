@@ -145,9 +145,14 @@ def _districts():
     return data.load_districts()
 
 
+@st.cache_data(show_spinner="Calibrating provider trust…")
+def _districts_with_provider_trust(districts, facilities):
+    return data.attach_provider_trust(districts, facilities)
+
+
 def main() -> None:
     facilities = _facilities()
-    districts = _districts()
+    districts = _districts_with_provider_trust(_districts(), facilities)
     ui.header()
 
     # E4: header collapsed to one line. The redundant orbit-note bubble and the

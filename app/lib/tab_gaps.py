@@ -138,8 +138,8 @@ def _glass_panel():
 def _wow_stat(ranked_all: pd.DataFrame) -> tuple[int, int, float]:
     """Honest demo anchor, recomputed live (never hardcoded).
 
-    Among the worst-N care-gap districts, how many have *no* facility passing
-    automated trust checks (``trustworthy_supply_rate`` <= 0). Returns
+    Among the worst-N care-gap districts, how many have *no* rows passing the
+    strict automated hard checks (``trustworthy_supply_rate`` <= 0). Returns
     ``(zero_trust_count, n, pct)``. Gracefully handles a missing column.
     """
     n = min(50, len(ranked_all))
@@ -164,8 +164,8 @@ def _wow_banner(zero_trust: int, n: int, pct: float) -> None:
         'letter-spacing:-.02em;font-variant-numeric:tabular-nums">'
         f'{zero_trust}/{n}</span>'
         '<span style="color:var(--text);font-size:1.0rem;line-height:1.4;flex:1 1 16rem">'
-        'of the worst care-gap districts have <strong>no provider claims passing checks</strong>. '
-        f'Prioritize these for doctor deployment.</span></div>',
+        'of the worst care-gap districts have <strong>no hard-check-passing claims</strong>. '
+        f'Prioritize these for call/verify before staffing.</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -457,7 +457,10 @@ def _planner_brief(
     district = str(selected.get("district_name", "unknown"))
     state = str(selected.get("state_ut", "unknown"))
     is_zero = bool(selected.get("zero_facility_desert", False))
-    trust_rate = pd.to_numeric(selected.get("trustworthy_supply_rate"), errors="coerce")
+    trust_rate = pd.to_numeric(
+        selected.get("provider_trust_score", selected.get("trustworthy_supply_rate")),
+        errors="coerce",
+    )
     supply = "No mapped provider" if is_zero else (
         "provider trust unknown" if pd.isna(trust_rate) else f"Provider trust {trust_rate * 100:.0f}%"
     )
@@ -480,6 +483,18 @@ def _planner_brief(
         _condition_cards(selected, districts)
 
 
+def _provider_trust_pct(rows: pd.DataFrame) -> pd.Series:
+    score = pd.to_numeric(
+        rows["provider_trust_score"] if "provider_trust_score" in rows else pd.Series(index=rows.index, dtype=float),
+        errors="coerce",
+    )
+    fallback = pd.to_numeric(
+        rows["trustworthy_supply_rate"] if "trustworthy_supply_rate" in rows else pd.Series(index=rows.index, dtype=float),
+        errors="coerce",
+    )
+    return score.combine_first(fallback) * 100
+
+
 def _shortlist_table(ranked: pd.DataFrame, gap_label: str) -> pd.DataFrame:
     """Compact, decision-first table: rank, place, action, gap, provider trust."""
     return pd.DataFrame({
@@ -488,7 +503,7 @@ def _shortlist_table(ranked: pd.DataFrame, gap_label: str) -> pd.DataFrame:
         "State": ranked["state_ut"],
         "Action": ranked["Action"],
         gap_label: pd.to_numeric(ranked["gap"], errors="coerce"),
-        "Provider trust %": pd.to_numeric(ranked["trustworthy_supply_rate"], errors="coerce") * 100,
+        "Provider trust %": _provider_trust_pct(ranked),
     })
 
 
@@ -541,10 +556,10 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
                 "Rank": st.column_config.NumberColumn(format="%d"),
                 gap_label: st.column_config.NumberColumn(
                     f"{gap_label} ▲ worse", format="%.2f",
-                    help="Higher = more unmet need with fewer claims passing checks."),
+                    help="Higher = more unmet need with weaker provider evidence."),
                 "Provider trust %": st.column_config.ProgressColumn(
                     "Provider trust ▲ better", format="%d%%", min_value=0, max_value=100,
-                    help="Share of mapped provider claims passing automated checks. Higher is better."),
+                    help="Calibrated provider-claim trust from Bayesian evidence plus smoothed checks."),
             },
         )
         st.caption("Select a row to inspect. More detail below.")
@@ -654,7 +669,7 @@ def _panel_ranking(ranked_all: pd.DataFrame, gap_label: str) -> None:
         "Action": ranked["Action"],
         gap_label: pd.to_numeric(ranked["gap"], errors="coerce"),
         "Need": pd.to_numeric(ranked["health_need_score"], errors="coerce"),
-        "Provider trust %": pd.to_numeric(ranked["trustworthy_supply_rate"], errors="coerce") * 100,
+        "Provider trust %": _provider_trust_pct(ranked),
         "Uncertainty": ranked["district_uncertainty_level"].astype(str).str.title(),
         "Decision logic": ranked["Decision logic"],
     })
@@ -668,13 +683,13 @@ def _panel_ranking(ranked_all: pd.DataFrame, gap_label: str) -> None:
             "Rank": st.column_config.NumberColumn(format="%d"),
             gap_label: st.column_config.NumberColumn(
                 f"{gap_label} ▲ worse", format="%.2f",
-                help="Higher = more unmet need with fewer claims passing checks."),
+                help="Higher = more unmet need with weaker provider evidence."),
             "Need": st.column_config.ProgressColumn(
                 "Need ▲ worse", format="%.2f", min_value=0, max_value=1,
                 help="NFHS health-burden score. Higher is worse."),
             "Provider trust %": st.column_config.ProgressColumn(
                 "Provider trust ▲ better", format="%d%%", min_value=0, max_value=100,
-                help="Share of mapped provider claims passing automated checks. Higher is better."),
+                help="Calibrated provider-claim trust from Bayesian evidence plus smoothed checks."),
         },
     )
 
@@ -700,8 +715,8 @@ def _panel_method(districts: pd.DataFrame, wow_n: int) -> None:
         st.markdown(
             f"**{n_desert} districts have zero mapped facilities** — and they hold "
             f"**{n_top} of the top 50** care gaps. Facility-count maps miss them; "
-            "this ranking surfaces them by leading with NFHS health need and the "
-            "absence of provider claims passing checks."
+            "this ranking surfaces them by leading with NFHS health need and weak "
+            "hard-check evidence."
         )
     st.markdown(
         "Care-gap score = **0.55 need · 0.25 supply scarcity · 0.20 low trust**. "

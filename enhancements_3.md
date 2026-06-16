@@ -238,3 +238,37 @@ Intended fixes now being implemented:
   - `output/playwright/top_gaps_with_provider_claims_final.png`
   - `output/playwright/top_gaps_no_provider_claims_final.png`
   - `output/playwright/map_no_provider_claims_final.png`
+
+## Google Data Science + Engineering Follow-Up — Calibrated Provider Trust
+
+**Gaps identified**
+- Provider trust was displayed as `Low accuracy` for thin districts because the UI used the strict hard-check pass rate (`passed / observed`) as the primary score. A district with `0/1` passing rows showed `0%`, even when richer row-level evidence was moderately strong.
+- The label `accuracy` implied measured medical truth. The hackathon brief asks teams to treat facility fields as claims to verify, cite evidence, and communicate uncertainty honestly; this score is evidence trust, not gold-standard clinical truth.
+- The hover text exposed Wilson intervals but did not explain why a thin denominator should be shrunk rather than shown as a literal zero.
+- The public Cloud Run URL was still on an older revision, so the local UX changes were not visible in the deployed demo.
+
+**Reasoning**
+- The Director of Data Science recommendation was to keep Wilson intervals for hard-check uncertainty, but not use them as the only headline score. Wilson intervals are appropriate for binomial pass-rate uncertainty, especially with small samples, but `0/1` is too brittle as a product-facing trust label.
+- The Director of Engineering recommendation was to compute the calibrated provider-trust score once after loading facilities, cache it, and pass it through Map and Top Care Gaps rather than recomputing in each card.
+- The chosen scoring logic is: `75%` row-level Bayesian validity posterior plus `25%` empirical-Bayes-smoothed hard-check pass rate. The hard pass-rate still appears in hover text with Wilson interval, so the metric is transparent without overloading the card.
+- Thresholds are deliberately simple for a non-technical planner: `High trust >= 80%`, `Medium trust >= 55%`, `Low trust < 55%`, and `Not scored` when no provider claims are mapped.
+- This aligns with the Devpost criteria around product judgment, evidence/uncertainty, and live demo reliability: the planner sees a clean tier first, then the statistical details only on hover.
+
+**Fixes implemented**
+- Added `data.attach_provider_trust(...)` to aggregate facility-level Bayesian validity posterior and smoothed hard-check pass rates onto district rows.
+- Cached calibrated district rows in `app.py` so the score is available across tabs without repeated posterior work.
+- Replaced `Low/Medium/High accuracy` UI language with `Low/Medium/High trust`.
+- Updated Map district cards, Top Care Gaps shortlists, Map hover tips, and active-detail tables to prefer `provider_trust_score` over the old hard-check pass rate.
+- Kept the hard automated checks and Wilson interval in hover text only, with copy that states the score is evidence-based claim trust, not measured medical truth.
+- Cleaned remaining visible copy from `trustworthy supply` toward `provider evidence`, `confirmed provider evidence`, or `provider hard-check pass rate`.
+
+**Verification**
+- Data smoke: `148` High trust, `295` Medium trust, `51` Low trust, `212` Not scored.
+- Demo district checks: `Siwan, Bihar` now shows `Medium trust` at `65%`; `Kendujhar, Odisha` shows `Medium trust` at `78%`; `Gurgaon, Haryana` shows `High trust` at `80%`.
+- Compile passed for `app/app.py`, `app/lib/data.py`, `app/lib/ui.py`, `app/lib/tab_gaps.py`, `app/lib/tab_map.py`, `app/lib/copilot.py`, `app/lib/simulator.py`, and `app/lib/tab_common.py`.
+- Rendered-phrase scan found no frontend `Low accuracy`, `Medium accuracy`, `High accuracy`, `No real facility photo`, `No real photo`, `Photo pending`, `field-check`, `field check`, or `on the ground` copy in app UI modules.
+
+**Research basis**
+- Devpost brief: build for non-technical planners, cite evidence, and communicate uncertainty rather than presenting weak evidence as fact.
+- Wilson intervals: retained for the hard-check pass-rate confidence interval.
+- Empirical-Bayes shrinkage: used to avoid false precision from tiny denominators while preserving information from observed checks.

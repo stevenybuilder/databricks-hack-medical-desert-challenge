@@ -170,7 +170,7 @@ def scenario_bands(
             "Est. capacity": round(likely_cap),
             "Capacity interval": f"{round(worst_cap)}–{round(best_cap)}",
             "Notes": (
-                f"Trust-weighted count (trustworthy supply rate "
+                f"Trust-weighted count (provider hard-check pass rate "
                 f"{_pct(trust_rate)}); capacity at interval midpoint."
             ),
         },
@@ -233,8 +233,8 @@ def simulate_interventions(
     """Compare candidate interventions for one district.
 
     Access improvement is derived from the district's actual need/supply gap:
-    interventions that add real, trustworthy supply help more where the
-    trustworthy-supply rate is low and the health-need score is high. Telehealth
+    interventions that add confirmed provider supply help more where the
+    provider hard-check pass rate is low and the health-need score is high. Telehealth
     is penalized and labeled low-confidence because broadband adoption is NOT in
     the cleaned tables (the doc's demo moment: telehealth-first underperforms
     mobile/CHW in low-evidence districts).
@@ -251,7 +251,7 @@ def simulate_interventions(
         care_gap = need * (1.0 - trust_rate)
     care_gap = _clip01(care_gap)
 
-    # Supply deficit: how much trustworthy supply is missing relative to need.
+    # Supply deficit: how much confirmed supply is missing relative to need.
     deficit = _clip01(need * (1.0 - trust_rate))
 
     uncertainty = str(district_row.get("district_uncertainty_level", "")).strip().lower()
@@ -291,12 +291,12 @@ def simulate_interventions(
             label = f"New provider capacity (+{int(capacity_increase_pct)}%)"
         elif key == "telehealth":
             # Telehealth cannot be validated (no broadband/elderly data) and is
-            # weak where trustworthy in-person supply is scarce. Penalize, and
+            # weak where confirmed in-person supply is scarce. Penalize, and
             # scale by the (illustrative) adoption lever.
             score *= (0.4 + 0.6 * telehealth_scale) * (0.5 + 0.5 * trust_rate)
             label = f"Telehealth (adoption {int(telehealth_scale * 100)}%)"
         elif key == "transport_vouchers":
-            # Transport helps only if some trustworthy supply exists to reach.
+            # Transport helps only if some confirmed supply exists to reach.
             score *= 0.4 + 0.6 * trust_rate
         elif key == "pharmacy_screening":
             # Screening adds value regardless of in-person specialist supply.

@@ -73,10 +73,10 @@ ACTION_TONES = {
 }
 
 ACTION_REASON = {
-    "real_desert_candidate": "High need and low trustworthy supply",
+    "real_desert_candidate": "High need and weak provider evidence",
     "phantom_desert_or_verification_gap": "Decision depends on fragile evidence",
     "supply_record_quality_problem": "Supply likely exists, but records are weak",
-    "referral_or_capacity_candidate": "Trustworthy capacity is already visible",
+    "referral_or_capacity_candidate": "Provider capacity evidence is already visible",
     "mixed_or_monitor": "Mixed signal; track but do not overcommit",
 }
 

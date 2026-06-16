@@ -1306,10 +1306,25 @@ def _region_card(label: str, value: str, caption: str, tone: str = "info",
     )
 
 
+def _provider_trust_tier(score: float) -> tuple[str, str, str]:
+    if pd.isna(score):
+        return "Not scored", "warn", "No mapped provider claims"
+    if score >= 0.80:
+        return "High trust", "good", "Strong source and claim evidence"
+    if score >= 0.55:
+        return "Medium trust", "warn", "Some evidence; call to confirm"
+    return "Low trust", "bad", "Weak or conflicting evidence"
+
+
 def _trust_summary(row: pd.Series) -> dict[str, str | float | int]:
     obs = _num(row.get("observed_facility_rows"))
     passed = _num(row.get("trustworthy_supply_rows"))
     rate = _num(row.get("trustworthy_supply_rate"))
+    calibrated = _num(row.get("provider_trust_score"))
+    posterior_mean = _num(row.get("provider_validity_posterior_mean"))
+    smoothed_pass = _num(row.get("provider_pass_rate_smoothed"))
+    prior_rate = _num(row.get("provider_trust_prior_rate"))
+    prior_strength = _num(row.get("provider_trust_prior_strength"))
     ci_low = _num(row.get("trustworthy_supply_rate_ci_low"))
     ci_high = _num(row.get("trustworthy_supply_rate_ci_high"))
     obs_n = 0 if pd.isna(obs) else int(obs)
@@ -1336,28 +1351,27 @@ def _trust_summary(row: pd.Series) -> dict[str, str | float | int]:
     if pd.isna(rate):
         rate = passed_n / obs_n
 
-    score = max(0.0, min(1.0, float(rate)))
-    if score >= 0.67:
-        label = "High accuracy"
-        caption = "Most observed claims pass"
-        tone = "good"
-    elif score >= 0.34:
-        label = "Medium accuracy"
-        caption = "Some observed claims pass"
-        tone = "warn"
+    score = max(0.0, min(1.0, float(calibrated if not pd.isna(calibrated) else rate)))
+    label = _clean_text(row.get("provider_trust_label"))
+    caption = _clean_text(row.get("provider_trust_caption"))
+    if label:
+        tone = "good" if score >= 0.80 else ("warn" if score >= 0.55 else "bad")
     else:
-        label = "Low accuracy"
-        caption = "Few observed claims pass"
-        tone = "bad"
+        label, tone, caption = _provider_trust_tier(score)
 
     interval = "unknown"
     if not pd.isna(ci_low) and not pd.isna(ci_high):
         interval = f"{ci_low * 100:.0f}% to {ci_high * 100:.0f}%"
+    posterior_text = "unknown" if pd.isna(posterior_mean) else f"{posterior_mean * 100:.0f}%"
+    smoothed_text = "unknown" if pd.isna(smoothed_pass) else f"{smoothed_pass * 100:.0f}%"
+    prior_text = "unknown" if pd.isna(prior_rate) else f"{prior_rate * 100:.0f}%"
+    prior_n = "2" if pd.isna(prior_strength) else f"{prior_strength:.0f}"
     tooltip = (
-        f"Provider trust score: {score * 100:.0f}% proxy accuracy. "
-        f"Mapped provider claims passing checks: {passed_n}/{obs_n}. "
-        f"Wilson interval: {interval}. This is evidence-based claim trust, not "
-        "measured medical truth."
+        f"Provider trust score: {score * 100:.0f}% calibrated evidence trust. "
+        f"Formula: 75% Bayesian row-validity evidence ({posterior_text}) plus "
+        f"25% empirical-Bayes smoothed pass rate ({smoothed_text}; prior {prior_text}, "
+        f"prior n={prior_n}). Hard automated checks: {passed_n}/{obs_n}; Wilson interval: "
+        f"{interval}. This is evidence-based claim trust, not measured medical truth."
     )
     return {
         "label": label,
@@ -1851,6 +1865,7 @@ def _fmt_pct(v, digits: int = 0) -> str:
 def _district_trust_assessment(row: pd.Series) -> dict[str, str]:
     """Categorical planner trust tier; numeric rate is reserved for hover text."""
     obs = _num(row.get("observed_facility_rows"))
+    calibrated = _num(row.get("provider_trust_score"))
     rate = _num(row.get("trustworthy_supply_rate"))
     ci_low = _num(row.get("trustworthy_supply_rate_ci_low"))
 
@@ -1858,31 +1873,44 @@ def _district_trust_assessment(row: pd.Series) -> dict[str, str]:
         label = "Not scored"
         tone = "info"
         caption = "No mapped provider claims."
+    elif not pd.isna(calibrated):
+        if calibrated >= 0.80:
+            label = "High trust"
+            tone = "deploy"
+            caption = "Strong source and claim evidence."
+        elif calibrated >= 0.55:
+            label = "Medium trust"
+            tone = "verify"
+            caption = "Some evidence; call to confirm."
+        else:
+            label = "Low trust"
+            tone = "danger"
+            caption = "Weak or conflicting evidence."
     elif pd.isna(rate):
         trusted = _num(row.get("trustworthy_supply_rows"))
         rate = 0.0 if pd.isna(trusted) else trusted / obs
         if rate < 0.34:
-            label = "Low accuracy"
+            label = "Low trust"
             tone = "danger"
             caption = "Few observed claims pass."
         elif rate >= 0.67 and obs >= 3 and (pd.isna(ci_low) or ci_low >= 0.35):
-            label = "High accuracy"
+            label = "High trust"
             tone = "deploy"
             caption = "Most observed claims pass."
         else:
-            label = "Medium accuracy"
+            label = "Medium trust"
             tone = "verify"
             caption = "Some observed claims pass."
     elif rate < 0.34:
-        label = "Low accuracy"
+        label = "Low trust"
         tone = "danger"
         caption = "Few observed claims pass."
     elif rate >= 0.67 and obs >= 3 and (pd.isna(ci_low) or ci_low >= 0.35):
-        label = "High accuracy"
+        label = "High trust"
         tone = "deploy"
         caption = "Most observed claims pass."
     else:
-        label = "Medium accuracy"
+        label = "Medium trust"
         tone = "verify"
         caption = "Some observed claims pass."
     return {"label": label, "tone": tone, "caption": caption}
@@ -1891,6 +1919,11 @@ def _district_trust_assessment(row: pd.Series) -> dict[str, str]:
 def _district_trust_tooltip(row: pd.Series) -> str:
     obs_raw = _num(row.get("observed_facility_rows"))
     rate_raw = _num(row.get("trustworthy_supply_rate"))
+    calibrated = _num(row.get("provider_trust_score"))
+    posterior_mean = _num(row.get("provider_validity_posterior_mean"))
+    smoothed_pass = _num(row.get("provider_pass_rate_smoothed"))
+    prior_rate = _num(row.get("provider_trust_prior_rate"))
+    prior_strength = _num(row.get("provider_trust_prior_strength"))
     if pd.isna(obs_raw) or obs_raw <= 0:
         return (
             "Provider trust score: not scored. This district has zero mapped "
@@ -1910,8 +1943,21 @@ def _district_trust_tooltip(row: pd.Series) -> str:
     )
     ci_text = "unknown" if ci == "unknown" else f"{ci} Wilson 95% interval"
     uncertainty = _clean_text(row.get("district_uncertainty_level")).title() or "Unknown"
+    if not pd.isna(calibrated):
+        posterior_text = "unknown" if pd.isna(posterior_mean) else _fmt_pct(posterior_mean)
+        smoothed_text = "unknown" if pd.isna(smoothed_pass) else _fmt_pct(smoothed_pass)
+        prior_text = "unknown" if pd.isna(prior_rate) else _fmt_pct(prior_rate)
+        prior_n = "2" if pd.isna(prior_strength) else f"{prior_strength:.0f}"
+        return (
+            f"Provider trust score: {_fmt_pct(calibrated)} calibrated evidence trust. "
+            f"Formula: 75% Bayesian row-validity evidence ({posterior_text}) plus "
+            f"25% empirical-Bayes smoothed pass rate ({smoothed_text}; prior {prior_text}, "
+            f"prior n={prior_n}). Hard automated checks: {trusted} of {obs}; Wilson interval: "
+            f"{ci_text}. District uncertainty: {uncertainty}. This is evidence-based claim "
+            "trust, not measured medical truth."
+        )
     return (
-        f"Provider trust score: {rate} proxy accuracy. Mapped provider claims passing "
+        f"Provider trust score: {rate} hard-check pass rate. Mapped provider claims passing "
         f"checks: {trusted} of {obs}. Wilson interval: {ci_text}. District uncertainty: "
         f"{uncertainty}. This is evidence-based claim trust, not measured medical truth."
     )
@@ -2372,7 +2418,7 @@ def active_district_detail(row: pd.Series, specialty: str) -> None:
                 "Interpretation": "Wilson interval for missing/estimated critical operational evidence.",
             },
             {
-                "Signal": "Trustworthy supply rate",
+                "Signal": "Provider hard-check pass rate",
                 "Value": f"{_fmt_interval(row.get('trustworthy_supply_rate_ci_low'), row.get('trustworthy_supply_rate_ci_high'))}",
                 "Interpretation": "Wilson interval for observed rows that passed automated checks.",
             },
