@@ -984,6 +984,21 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
+    st.markdown(
+        """
+        <div class="mdn-nav-groups">
+          <span class="mdn-nav-grp mdn-nav-explore">Explore</span>
+          <span class="mdn-nav-sep">Map · Top care gaps</span>
+          <span class="mdn-nav-sep">|</span>
+          <span class="mdn-nav-grp mdn-nav-act">Act</span>
+          <span class="mdn-nav-sep">Interventions · Scenario lab</span>
+          <span class="mdn-nav-sep">|</span>
+          <span class="mdn-nav-grp mdn-nav-verify">Verify</span>
+          <span class="mdn-nav-sep">Uncertainty · Trust · Decisions</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     primary_view = st.segmented_control(
         "Primary view",
         ["Map", "Top care gaps", "Interventions", "Scenario lab",
