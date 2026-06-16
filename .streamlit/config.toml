@@ -1,10 +1,11 @@
 [theme]
-base = "light"
-primaryColor = "#FF3621"          # Databricks accent
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f4f6fa"
-textColor = "#0f172a"
+base = "dark"
+primaryColor = "#2eccc1"
+backgroundColor = "#04070d"
+secondaryBackgroundColor = "#0a1320"
+textColor = "#eef4ff"
 font = "sans serif"
+baseRadius = "0.75rem"
 
 [server]
 headless = true

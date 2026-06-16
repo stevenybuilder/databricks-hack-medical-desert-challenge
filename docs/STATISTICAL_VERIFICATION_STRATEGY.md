@@ -78,6 +78,23 @@ The pipeline now writes:
 - `output/data/active_learning_facility_queue.csv`
 - `output/data/active_learning_district_queue.csv`
 
+The decision-statistics report is generated with:
+
+```bash
+python3 scripts/build_statistical_decision_report.py
+```
+
+It writes:
+
+- `output/data/decision_category_volume_summary.csv`
+- `output/data/statistical_decision_policy_report.json`
+- `docs/STATISTICAL_DECISION_FRAMEWORK.md`
+
+The category report keeps the denominator/grain visible for every percentage and
+adds both Wilson 95% intervals and Bayesian Jeffreys posterior intervals for
+finite-row category rates. Those intervals quantify observed category-rate
+uncertainty; they are not supervised accuracy.
+
 ### Facility queue score
 
 The facility queue combines:

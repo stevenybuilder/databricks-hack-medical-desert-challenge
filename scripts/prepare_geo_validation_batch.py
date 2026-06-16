@@ -506,7 +506,7 @@ def add_external_uncertainty_fields(out: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_candidates(limit: int) -> pd.DataFrame:
+def build_candidates(limit: int, exclude_ids: set[str] | None = None) -> pd.DataFrame:
     df = pd.read_csv(FACILITY_CSV, usecols=USECOLS, low_memory=False)
     for col in [
         "facility_latitude",
@@ -559,6 +559,8 @@ def build_candidates(limit: int) -> pd.DataFrame:
         | df["facility_longitude"].isna()
     )
     out = df[mask].copy()
+    if exclude_ids:
+        out = out[~out["unique_id"].astype(str).isin(exclude_ids)].copy()
     distance = out["geo_distance_km_to_pincode_centroid"].fillna(-1)
     out["geo_review_reason"] = out.apply(geo_reason, axis=1)
     out["raw_india_address"] = out.apply(raw_address, axis=1)
@@ -590,6 +592,15 @@ def build_candidates(limit: int) -> pd.DataFrame:
     out = add_external_uncertainty_fields(out)
     out = out.drop(columns=["_fuzzy_reasons"])
     return out.sort_values("geo_review_score", ascending=False).head(limit).reset_index(drop=True)
+
+
+def read_exclude_ids(path: Path | None) -> set[str]:
+    if path is None:
+        return set()
+    if not path.exists():
+        raise FileNotFoundError(path)
+    frame = pd.read_csv(path, usecols=["unique_id"])
+    return set(frame["unique_id"].dropna().astype(str))
 
 
 def write_geocoder_priors(path: Path) -> None:
@@ -910,28 +921,34 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=250)
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
+    parser.add_argument("--exclude-ids-file", type=Path)
+    parser.add_argument("--output-prefix", default="geo_validation")
+    parser.add_argument("--skip-sql", action="store_true")
     args = parser.parse_args()
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SQL_DIR.mkdir(parents=True, exist_ok=True)
 
-    candidates = build_candidates(args.limit)
-    candidate_csv = DATA_DIR / "geo_validation_candidates.csv"
-    prompt_jsonl = DATA_DIR / "geo_validation_ai_prompts.jsonl"
+    exclude_ids = read_exclude_ids(args.exclude_ids_file)
+    candidates = build_candidates(args.limit, exclude_ids=exclude_ids)
+    candidate_csv = DATA_DIR / f"{args.output_prefix}_candidates.csv"
+    prompt_jsonl = DATA_DIR / f"{args.output_prefix}_ai_prompts.jsonl"
     geocoder_priors_csv = DATA_DIR / "geocoder_uncertainty_priors.csv"
     candidates.to_csv(candidate_csv, index=False)
     write_geocoder_priors(geocoder_priors_csv)
     write_prompts(candidates, prompt_jsonl, args.endpoint)
-    write_sql(args.endpoint, args.limit)
+    if not args.skip_sql:
+        write_sql(args.endpoint, args.limit)
 
     print(f"Wrote {candidate_csv.relative_to(ROOT)} ({len(candidates)} rows)")
     print(f"Wrote {geocoder_priors_csv.relative_to(ROOT)}")
     print(f"Wrote {prompt_jsonl.relative_to(ROOT)}")
-    print(f"Wrote {SQL_DIR.relative_to(ROOT)}/geo_validation_summary.sql")
-    print(f"Wrote {SQL_DIR.relative_to(ROOT)}/geo_validation_candidates_create.sql")
-    print(f"Wrote {SQL_DIR.relative_to(ROOT)}/geo_address_janitor_ai_query.sql")
-    print(f"Wrote {SQL_DIR.relative_to(ROOT)}/geo_fuzzy_reconciliation.sql")
-    print(f"Wrote {SQL_DIR.relative_to(ROOT)}/lakeflow_geo_validation_pipeline.sql")
+    if not args.skip_sql:
+        print(f"Wrote {SQL_DIR.relative_to(ROOT)}/geo_validation_summary.sql")
+        print(f"Wrote {SQL_DIR.relative_to(ROOT)}/geo_validation_candidates_create.sql")
+        print(f"Wrote {SQL_DIR.relative_to(ROOT)}/geo_address_janitor_ai_query.sql")
+        print(f"Wrote {SQL_DIR.relative_to(ROOT)}/geo_fuzzy_reconciliation.sql")
+        print(f"Wrote {SQL_DIR.relative_to(ROOT)}/lakeflow_geo_validation_pipeline.sql")
 
 
 if __name__ == "__main__":

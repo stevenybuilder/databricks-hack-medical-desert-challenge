@@ -48,9 +48,10 @@ def load_env_file(path: Path) -> dict[str, str]:
 
 
 def api_key_from_env(env_files: list[Path]) -> str:
-    merged = dict(os.environ)
+    merged: dict[str, str] = {}
     for path in env_files:
         merged.update(load_env_file(path))
+    merged.update(os.environ)
     return merged.get("GOOGLE_MAPS_API_KEY") or merged.get("GOOGLE_API_KEY") or ""
 
 
@@ -147,6 +148,12 @@ def call_google_geocode(address: str, api_key: str, timeout: int) -> dict[str, A
     url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode(params)
     with urlopen(url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def should_retry_google_response(response: dict[str, Any]) -> bool:
+    status = str(response.get("status") or "")
+    error_message = str(response.get("error_message") or "").lower()
+    return status == "REQUEST_DENIED" and "expired" in error_message
 
 
 def first_result_payload(row: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
@@ -266,7 +273,7 @@ def write_outputs(rows: list[dict[str, Any]], raw_rows: list[dict[str, Any]]) ->
 
     csv_path = DATA_DIR / "google_geocoding_results.csv"
     raw_path = DATA_DIR / "google_geocoding_raw.jsonl"
-    sql_path = SQL_DIR / "google_geocoding_results_create.sql"
+    sql_path = SQL_DIR / "google_geocoding_results_generated.sql"
 
     fieldnames = list(rows[0].keys()) if rows else []
     with csv_path.open("w", newline="", encoding="utf-8") as fh:
@@ -305,6 +312,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=138)
     parser.add_argument("--sleep", type=float, default=0.05)
     parser.add_argument("--timeout", type=int, default=20)
+    parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--retry-sleep", type=float, default=2.0)
     parser.add_argument("--env-file", action="append", type=Path, default=[])
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -333,6 +342,11 @@ def main() -> None:
         if not address:
             continue
         response = call_google_geocode(address, api_key, args.timeout)
+        for attempt in range(args.retries):
+            if not should_retry_google_response(response):
+                break
+            time.sleep(args.retry_sleep * (attempt + 1))
+            response = call_google_geocode(address, api_key, args.timeout)
         results.append(first_result_payload(row, response))
         raw_results.append(
             {
@@ -343,19 +357,19 @@ def main() -> None:
             }
         )
         if idx % 25 == 0:
-            print(f"Geocoded {idx}/{len(candidates)} rows")
+            print(f"Geocoded {idx}/{len(candidates)} rows", flush=True)
         time.sleep(args.sleep)
 
     csv_path, raw_path, sql_path = write_outputs(results, raw_results)
-    print(f"Wrote {csv_path.relative_to(ROOT)} ({len(results)} rows)")
-    print(f"Wrote {raw_path.relative_to(ROOT)}")
-    print(f"Wrote {sql_path.relative_to(ROOT)}")
+    print(f"Wrote {csv_path.relative_to(ROOT)} ({len(results)} rows)", flush=True)
+    print(f"Wrote {raw_path.relative_to(ROOT)}", flush=True)
+    print(f"Wrote {sql_path.relative_to(ROOT)}", flush=True)
 
     counts: dict[str, int] = {}
     for row in results:
         key = str(row.get("google_validation_status"))
         counts[key] = counts.get(key, 0) + 1
-    print(json.dumps(counts, indent=2, sort_keys=True))
+    print(json.dumps(counts, indent=2, sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":

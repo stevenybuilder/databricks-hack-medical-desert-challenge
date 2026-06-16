@@ -95,6 +95,8 @@ defaults to the CSVs below.
 | `facility_prediction_outputs_seed.csv` | Rule-baseline prediction outputs with confidence, evidence tier, and abstain reason. |
 | `golden_facility_seed_report.json` | Report-card counts and guardrails for the seed artifacts. |
 | `facility_prediction_model_report.json` | Supervised trainer report: model choice, trained/skipped tasks, metrics, and abstention policy. |
+| `decision_category_volume_summary.csv` | Category volumes, percentages, Wilson intervals, and Bayesian Jeffreys intervals by grain. |
+| `statistical_decision_policy_report.json` | Decision rules and statistical-method policy for confidence thresholds, expected value, Bayesian updates, and causal boundaries. |
 | `actual_insights_summary.json` | Pre-computed rankings (top care gaps, desert candidates). |
 | `analysis_summary.json`, `cleaned_dataset_audit.json` | Audits. |
 | `raw_*.csv` | Raw extracts of the 3 source tables. |
@@ -112,7 +114,10 @@ defaults to the CSVs below.
 - **Evidence:** `sample_facility_names`, `sample_claim_evidence`, `sample_source_urls`
 
 ### `planning_category` distribution
-real_desert_candidate: 8 · phantom_desert_or_verification_gap: 15 · supply_record_quality_problem: 93 · referral_or_capacity_candidate: 99 · mixed_or_monitor: 279
+Current `district_health_facility_cleaned.csv` distribution:
+real_desert_candidate: 31 · phantom_desert_or_verification_gap: 54 ·
+supply_record_quality_problem: 89 · referral_or_capacity_candidate: 90 ·
+mixed_or_monitor: 230
 
 ## Known data-quality / join traps
 - State alias: NFHS `Maharastra` vs pincode `MAHARASHTRA` (handled via crosswalk; Maharashtra gap now 0).
