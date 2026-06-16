@@ -1,6 +1,6 @@
 # Databricks Copilot: Medical Desert Map
 
-Confidence-aware medical-desert planning for India. The app uses Bayesian-style provider trust scoring, uncertainty-aware geospatial analysis, CatBoost supply imputation, Wilson confidence intervals, and split-conformal proxy coverage to help planners decide where to deploy doctors, where to call or verify providers, and where the evidence is still too weak to trust.
+CareGap is a decision-support app for identifying likely medical deserts in India and deciding what to do next. It combines district health-need signals, provider-claim evidence, geospatial uncertainty, and planner-friendly trust tiers so teams can prioritize doctor deployment, provider verification, and referral planning from one workflow.
 
 Built for the [Databricks Apps & Agents for Good Hackathon 2026](https://dais-for-good-2026.devpost.com/). Project page: [Databricks Copilot: Medical Desert Map](https://devpost.com/software/databricks-copilot-medical-desert-map).
 
@@ -14,21 +14,20 @@ The Databricks App may require workspace authentication. The Cloud Run app is th
 
 ## What It Does
 
-CareGap helps a healthcare planner answer three questions:
+CareGap is built around three planner questions:
 
-- **Where should we act first?** The Map and Top Care Gaps views rank districts by health need, provider scarcity, and uncertainty.
-- **Can we trust the provider evidence?** Facility cards show source-backed claims, service chips, check status, and trust tiers instead of treating every row as ground truth.
-- **What should happen next?** The app recommends deploy/build, call or verify, fix records, referral routing, or monitoring.
+- **Where should we act first?** Rank districts by health need, supply scarcity, and confidence that the gap is real.
+- **Can we trust the provider evidence?** Inspect source-backed facility claims, service chips, check status, and provider trust tiers.
+- **What should happen next?** Move from a district signal to a concrete action: deploy/build, call or verify, fix records, route referrals, or monitor.
 
 Core workflows:
 
 - Medical desert map with district-level care-gap scoring.
-- Top Care Gaps shortlist for doctor deployment planning.
+- Top Care Gaps shortlist for deployment planning.
 - Provider-claim cards with source links, service chips, and automated check status.
-- Filters for districts with provider claims versus no mapped claims.
-- Hover explanations for health need, gap confidence, and provider trust.
-- Planner notes and saved actions for demo handoff.
-- Copilot explanations for methodology, caveats, and next steps.
+- District filters for provider-claim demos versus no-claim desert demos.
+- Compact hover explanations for health need, gap confidence, and provider trust.
+- Planner notes, saved actions, and Copilot methodology explanations.
 
 ## Technical Approach
 
@@ -112,10 +111,6 @@ gcloud run deploy caregap-app \
 ```
 
 The Docker image copies `app/`, `.streamlit/`, and the allowed public `output/data/` artifacts only.
-
-## Caveats
-
-This is proxy decision support, not verified medical truth. Provider trust reflects evidence quality and automated checks. The current conformal calibration uses a proxy pseudo-label until a larger human-verified gold/silver label set exists.
 
 ## Team
 
