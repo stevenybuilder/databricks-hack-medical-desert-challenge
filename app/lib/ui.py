@@ -355,9 +355,10 @@ div[data-testid="stSegmentedControl"] button {
   border-radius: 999px !important;
   color: var(--mdn-muted) !important;
   font-weight: 600 !important;
-  font-size: .82rem !important;
-  padding: .34rem .8rem !important;
+  font-size: .8rem !important;
+  padding: .34rem .72rem !important;
   letter-spacing: .005em;
+  white-space: nowrap;
 }
 div[data-testid="stSegmentedControl"] button:hover {
   color: var(--mdn-text) !important;

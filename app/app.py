@@ -273,7 +273,7 @@ def map_tab(facilities: pd.DataFrame, specialty: str) -> None:
                              "padding": "8px"}}
         deck = pdk.Deck(layers=layers, initial_view_state=view,
                         map_style=config.MAP_STYLES[basemap], tooltip=tooltip)
-        event = st.pydeck_chart(deck, width="stretch", height=680, key="map",
+        event = st.pydeck_chart(deck, height=680, key="map",
                                 on_select="rerun", selection_mode="single-object")
         ui.legend("Lower", "Higher", higher_is_worse)
 
