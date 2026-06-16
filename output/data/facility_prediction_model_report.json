@@ -1,0 +1,58 @@
+{
+  "model_policy": {
+    "primary_model": "calibrated logistic regression",
+    "why": "Best first supervised model for a small source-corroborated tabular label set: interpretable coefficients, class weighting, probabilities for abstention, and a defensible baseline before trying boosted trees.",
+    "upgrade_path": "Compare against LightGBM/CatBoost after there are enough gold/silver labels per task and report slice metrics by state/source tier.",
+    "abstention_rule": "Use max predicted probability thresholds plus evidence_tier/source conflict checks."
+  },
+  "input_rows": 10077,
+  "trainable_rows": 0,
+  "evidence_tier_counts": {
+    "bronze": 9141,
+    "conflict": 936
+  },
+  "trained_tasks": 0,
+  "skipped_tasks": 8,
+  "tasks": [
+    {
+      "task": "trust_posture",
+      "status": "skipped",
+      "reason": "only 0 trainable rows; need at least 50"
+    },
+    {
+      "task": "facility_type",
+      "status": "skipped",
+      "reason": "only 0 trainable rows; need at least 50"
+    },
+    {
+      "task": "capacity_band",
+      "status": "skipped",
+      "reason": "only 0 trainable rows; need at least 50"
+    },
+    {
+      "task": "doctor_count_band",
+      "status": "skipped",
+      "reason": "only 0 trainable rows; need at least 50"
+    },
+    {
+      "task": "service_maternity",
+      "status": "skipped",
+      "reason": "only 0 trainable rows; need at least 50"
+    },
+    {
+      "task": "service_emergency",
+      "status": "skipped",
+      "reason": "only 0 trainable rows; need at least 50"
+    },
+    {
+      "task": "service_diagnostic",
+      "status": "skipped",
+      "reason": "only 0 trainable rows; need at least 50"
+    },
+    {
+      "task": "service_ncd",
+      "status": "skipped",
+      "reason": "only 0 trainable rows; need at least 50"
+    }
+  ]
+}

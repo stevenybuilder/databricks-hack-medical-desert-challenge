@@ -1,0 +1,34 @@
+{
+  "created_outputs": {
+    "source_matches": "output/data/golden_facility_source_matches_seed.csv",
+    "training_set": "output/data/golden_facility_training_set_seed.csv",
+    "features": "output/data/facility_prediction_features_seed.csv",
+    "prediction_outputs": "output/data/facility_prediction_outputs_seed.csv"
+  },
+  "row_counts": {
+    "cleaned_facilities_input": 10077,
+    "source_matches": 19834,
+    "training_set": 10077,
+    "features": 10077,
+    "prediction_outputs": 10077,
+    "geo_validation_candidates_overlap": 250
+  },
+  "label_tier_counts": {
+    "bronze": 9141,
+    "conflict": 936
+  },
+  "trust_posture_counts": {
+    "needs_review": 6876,
+    "passed_proxy_checks": 1999,
+    "contradicted_or_geo_invalid": 936,
+    "unknown": 266
+  },
+  "trainable_supervised_labels": 0,
+  "non_trainable_reason": "Seed rows are bronze/conflict only. Promote rows to gold/silver after HFR/authoritative registry or independent open-data corroboration.",
+  "guardrails": [
+    "Do not train supervised accuracy metrics from bronze/conflict seed labels.",
+    "Do not use Google/Mappls as durable labels without license review.",
+    "Use NFHS only as district context, never facility-level truth.",
+    "Keep abstain_reason and evidence_tier visible in the app."
+  ]
+}

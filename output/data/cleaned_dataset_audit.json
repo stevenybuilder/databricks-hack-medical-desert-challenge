@@ -1,0 +1,205 @@
+{
+  "upload_ready": true,
+  "issues": [
+    {
+      "severity": "warning",
+      "check": "raw_facility_duplicate_unique_id",
+      "detail": "Raw facilities contained duplicate unique_id values; cleaned facility table keeps one row and records source occurrence count.",
+      "rows": 11
+    }
+  ],
+  "metrics": {
+    "facility_rows": 10077,
+    "raw_facility_rows": 10088,
+    "raw_facility_duplicate_unique_id_rows": 11,
+    "district_rows": 494,
+    "unmatched_pincode_district_groups": 60,
+    "facility_needs_human_review_rows": 3029,
+    "facility_trustworthy_supply_rows": 7046,
+    "district_planning_category_counts": {
+      "mixed_or_monitor": 279,
+      "referral_or_capacity_candidate": 99,
+      "supply_record_quality_problem": 93,
+      "phantom_desert_or_verification_gap": 15,
+      "real_desert_candidate": 8
+    },
+    "district_uncertainty_counts": {
+      "lower": 209,
+      "higher": 180,
+      "medium": 105
+    },
+    "top_care_gap_districts": [
+      {
+        "state_ut": "Odisha",
+        "district_name": "Kendujhar ",
+        "planning_category": "real_desert_candidate",
+        "observed_facility_rows": 1,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.7144711992445704,
+        "care_gap_score": 0.820185880232287,
+        "district_medical_desert_priority_score": 0.7825236884158533,
+        "trust_gap_score": 0.75,
+        "best_care_signal_score": 0.2609208320430625,
+        "district_data_quality_score": 0.688,
+        "sample_facility_names": "Malkangiri District Headquarters Hospital"
+      },
+      {
+        "state_ut": "Bihar",
+        "district_name": "Siwan ",
+        "planning_category": "real_desert_candidate",
+        "observed_facility_rows": 1,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.6562204910292729,
+        "care_gap_score": 0.7881479907138733,
+        "district_medical_desert_priority_score": 0.74466072807591,
+        "trust_gap_score": 0.75,
+        "best_care_signal_score": 0.2842211153291815,
+        "district_data_quality_score": 0.688,
+        "sample_facility_names": "Adarsh Hospital"
+      },
+      {
+        "state_ut": "Jharkhand",
+        "district_name": "Dumka ",
+        "planning_category": "real_desert_candidate",
+        "observed_facility_rows": 1,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.6434726156751652,
+        "care_gap_score": 0.7811366592691142,
+        "district_medical_desert_priority_score": 0.7363746090957399,
+        "trust_gap_score": 0.75,
+        "best_care_signal_score": 0.2893202654708245,
+        "district_data_quality_score": 0.688,
+        "sample_facility_names": "Care Diagnostic"
+      },
+      {
+        "state_ut": "Jharkhand",
+        "district_name": "Simdega ",
+        "planning_category": "real_desert_candidate",
+        "observed_facility_rows": 1,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.6259442870632672,
+        "care_gap_score": 0.7714960785325702,
+        "district_medical_desert_priority_score": 0.7249811954980063,
+        "trust_gap_score": 1.0,
+        "best_care_signal_score": 0.2963315969155838,
+        "district_data_quality_score": 0.688,
+        "sample_facility_names": "Shanti Bhawan Medical Center"
+      },
+      {
+        "state_ut": "Madhya Pradesh",
+        "district_name": "Mandla ",
+        "planning_category": "real_desert_candidate",
+        "observed_facility_rows": 2,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.6818932955618507,
+        "care_gap_score": 0.761782203247277,
+        "district_medical_desert_priority_score": 0.7046678890787658,
+        "trust_gap_score": 1.0,
+        "best_care_signal_score": 0.290146325499956,
+        "district_data_quality_score": 0.688,
+        "sample_facility_names": "Ujjain District Hospital; District Hospital, Mandya"
+      },
+      {
+        "state_ut": "Odisha",
+        "district_name": "Koraput ",
+        "planning_category": "real_desert_candidate",
+        "observed_facility_rows": 1,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.6040486307837581,
+        "care_gap_score": 0.7594534675788402,
+        "district_medical_desert_priority_score": 0.7107490189163254,
+        "trust_gap_score": 1.0,
+        "best_care_signal_score": 0.3050898594273874,
+        "district_data_quality_score": 0.688,
+        "sample_facility_names": "Asha Kiran Hospital, Lamtaput, Odisha"
+      },
+      {
+        "state_ut": "Odisha",
+        "district_name": "Nabarangapur ",
+        "planning_category": "real_desert_candidate",
+        "observed_facility_rows": 1,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.601333805476865,
+        "care_gap_score": 0.757960313660049,
+        "district_medical_desert_priority_score": 0.7089843824668448,
+        "trust_gap_score": 0.75,
+        "best_care_signal_score": 0.3345757895501447,
+        "district_data_quality_score": 0.83,
+        "sample_facility_names": "Patra Dental Clinic"
+      },
+      {
+        "state_ut": "Gujarat",
+        "district_name": "Mahesana ",
+        "planning_category": "real_desert_candidate",
+        "observed_facility_rows": 2,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.6370986779981115,
+        "care_gap_score": 0.7371451635872204,
+        "district_medical_desert_priority_score": 0.6755513876623352,
+        "trust_gap_score": 0.75,
+        "best_care_signal_score": 0.3080641725254517,
+        "district_data_quality_score": 0.688,
+        "sample_facility_names": "Jyoti Hospital; Synergy Eye & ENT Hospital"
+      },
+      {
+        "state_ut": "Jammu & Kashmir",
+        "district_name": "Doda ",
+        "planning_category": "supply_record_quality_problem",
+        "observed_facility_rows": 1,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.5609065155807366,
+        "care_gap_score": 0.7357253042171783,
+        "district_medical_desert_priority_score": 0.6827066440343613,
+        "trust_gap_score": 1.0,
+        "best_care_signal_score": 0.310946705508596,
+        "district_data_quality_score": 0.631,
+        "sample_facility_names": "Primary Health Centre Trown"
+      },
+      {
+        "state_ut": "Jammu & Kashmir",
+        "district_name": "Udhampur ",
+        "planning_category": "supply_record_quality_problem",
+        "observed_facility_rows": 1,
+        "trustworthy_supply_rows": 0,
+        "trustworthy_supply_rate": 0.0,
+        "health_need_score": 0.553765344664778,
+        "care_gap_score": 0.7317976602134011,
+        "district_medical_desert_priority_score": 0.6780648829389883,
+        "trust_gap_score": 1.0,
+        "best_care_signal_score": 0.3252031738749795,
+        "district_data_quality_score": 0.688,
+        "sample_facility_names": "Redcliffe Labs - Collection Center Sail SallanUdhampur - 182101"
+      }
+    ],
+    "known_limitations": [
+      "NFHS indicators are district-level and older than the web-extracted facility data.",
+      "Observed FDR facility counts are not a verified supply census.",
+      "District matching depends on PIN code and name harmonization; unmatched pincode district groups are retained for audit.",
+      "Claimed services are detected from extracted text and should be cited/verified before operational use.",
+      "No travel-time or population denominator is available, so care gaps are proxy scores, not definitive access measures."
+    ]
+  },
+  "source_summary": {
+    "facilities": {
+      "rows": 10088,
+      "columns": 48
+    },
+    "india_post_pincode_directory": {
+      "rows": 165627,
+      "columns": 11
+    },
+    "nfhs_5_district_health_indicators": {
+      "rows": 706,
+      "columns": 109
+    }
+  }
+}

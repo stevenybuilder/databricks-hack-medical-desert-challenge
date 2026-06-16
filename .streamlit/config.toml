@@ -1,0 +1,13 @@
+[theme]
+base = "light"
+primaryColor = "#FF3621"          # Databricks accent
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f4f6fa"
+textColor = "#0f172a"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
