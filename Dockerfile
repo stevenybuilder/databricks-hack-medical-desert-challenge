@@ -20,6 +20,7 @@ RUN pip install -r /srv/app/requirements.txt
 
 # App code + the (non-sensitive) cleaned data the app reads in csv mode.
 COPY app/ /srv/app/
+COPY .streamlit/ /srv/app/.streamlit/
 COPY output/data/ /srv/output/data/
 
 # Cloud Run injects $PORT (default 8080). Streamlit must bind it on 0.0.0.0.
