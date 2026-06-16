@@ -1,7 +1,13 @@
-# Data Engineering Decision Log
+# Data Engineering
 
 _Consolidated from all pipeline documentation, notebooks, and architecture docs._
 _Last updated: 2026-06-15_
+
+> **Companion spec:** `ZERO_SUPPLY_DESERT_RECOVERY_SPEC.md` defines a planned
+> enhancement that includes all 706 NFHS districts (surfacing zero-supply
+> deserts) and adds geocoder-based district recovery. Sections below marked
+> **(PLANNED)** describe behavior from that spec; unmarked sections describe the
+> current implemented pipeline.
 
 ---
 
@@ -18,7 +24,8 @@ _Last updated: 2026-06-15_
 9. [Active Uncertainty Queues](#9-active-uncertainty-queues)
 10. [Golden Facility Prediction Phase](#10-golden-facility-prediction-phase)
 11. [Infrastructure & Deployment Decisions](#11-infrastructure--deployment-decisions)
-12. [Known Limitations & Risk Mitigations](#12-known-limitations--risk-mitigations)
+12. [Zero-Supply Desert Recovery (PLANNED)](#12-zero-supply-desert-recovery-planned)
+13. [Known Limitations & Risk Mitigations](#13-known-limitations--risk-mitigations)
 
 ---
 
@@ -135,6 +142,14 @@ flowchart LR
 
 **Justification:** A single join strategy would lose ~10% of records. The cascade (exact → fuzzy → city/state fallback) maximizes coverage while tracking confidence per row via `join_strategy`, `join_confidence`, and `join_uncertainty_reason` fields.
 
+> **(PLANNED)** A new `geocoder_district_recovery` strategy will be added after
+> the cascade fails. The ~613 rows in `pincode_only_no_health_match`,
+> `no_valid_pincode`, and `unjoined` are sent through the LLM + geocoder pipeline;
+> the geocoder's `address_components` are parsed to recover district/state and
+> re-joined to NFHS. Confidence is tiered by `location_type` (ROOFTOP/RANGE →
+> 0.70, GEOMETRIC_CENTER → 0.60, APPROXIMATE → 0.50). See
+> `ZERO_SUPPLY_DESERT_RECOVERY_SPEC.md` and §12.
+
 ### Decision: Name Normalization via Crosswalk
 
 **Known traps handled:**
@@ -165,6 +180,17 @@ flowchart LR
 4. Facility-level data is retained as an audit/evidence layer
 
 **Implication:** The district dataset (494 rows) is the app's backbone. The facility dataset (10,077 rows) provides supporting evidence for district-level conclusions.
+
+### Known Issue: Survivorship Bias on Zero-Supply Districts
+
+The current district table is built from the **facility side** — only NFHS districts that had at least one facility matched to them appear in the output. This drops the ~212 NFHS districts (706 → 494) that had zero matched facilities.
+
+This is a critical gap for medical-desert analysis: a district with zero observed supply is the **strongest possible desert signal**, yet it is currently excluded. The absence has three competing explanations (real desert / crawl gap / join failure) that the current pipeline cannot distinguish.
+
+> **(PLANNED)** §12 and `ZERO_SUPPLY_DESERT_RECOVERY_SPEC.md` describe the fix:
+> rebuild the district table from the **NFHS side** (all 706 districts), annotate
+> zero-supply districts explicitly, rank them as highest priority, and use
+> geocoder-based district recovery to separate real deserts from join failures.
 
 ---
 
@@ -502,13 +528,79 @@ flowchart LR
 
 ---
 
-## 12. Known Limitations & Risk Mitigations
+## 12. Zero-Supply Desert Recovery (PLANNED)
+
+_Full spec: `ZERO_SUPPLY_DESERT_RECOVERY_SPEC.md`._
+
+### Problem
+
+The district table is built from matched facilities only, so the ~212 NFHS
+districts with zero matched facilities (706 → 494) are dropped. These are the
+highest-signal candidate deserts — residents may have no access to any clinical
+facility — yet they are invisible in the leaderboard. This is survivorship bias.
+
+### Decision: Build the District Table from the NFHS Side (all 706 districts)
+
+Flip the aggregation so every NFHS district appears via a LEFT JOIN from the NFHS
+side. Zero-supply districts get `observed_facility_rows = 0`, `zero_observed_supply = true`,
+and `district_uncertainty_level = "higher"` (absence has three explanations).
+
+### Decision: Geocoder-Based District Recovery
+
+```mermaid
+flowchart TD
+    A["Failed-join rows<br/>(~613: no_health_match,<br/>no_valid_pincode, unjoined)"] --> B["LLM address janitor"]
+    B --> C["Google geocoder<br/>parse address_components"]
+    C --> D["Extract + normalize<br/>district / state"]
+    D --> E{"Matches NFHS?"}
+    E -->|"ROOFTOP / RANGE (>=0.70)"| F["district_recovered<br/>→ fills supply"]
+    E -->|"GEOMETRIC_CENTER (0.60)"| G["district_recovered_tentative<br/>→ flagged, stays visible"]
+    E -->|"APPROXIMATE (<=0.50)"| H["does NOT count as supply"]
+    E -->|"ZERO_RESULTS / mismatch"| I["unresolved"]
+```
+
+**Two-tier acceptance (asymmetric-harm conservative):** falsely erasing a real
+desert is higher-harm than falsely keeping one, so only ≥0.70 recoveries remove a
+district from the zero-supply state. GEOMETRIC_CENTER (0.60) is tentative and stays
+flagged; APPROXIMATE (≤0.50) never erases a desert.
+
+### Decision: Three Terminal States for Zero-Supply Districts
+
+| Category | Meaning | Desert confidence |
+|---|---|---|
+| `zero_observed_supply_unvalidated` | Zero supply, no geocoding evidence either way | Lowest — blind spot |
+| `zero_supply_geocode_checked` | Geocoding attempted on nearby rows, none confirmed | **Higher** — actively checked |
+| (recovered) → leaves zero-supply | Geocoding found a real facility (≥0.70) | Not a desert |
+
+Both zero-supply categories rank **above** `real_desert_candidate`, because complete
+observed absence is a stronger signal than low-but-nonzero supply. Geocoding either
+fills a gap or **hardens** the desert signal.
+
+### Decision: Separate Leaderboard Lane (Not Interleaved)
+
+Zero-supply districts render in a distinct lane above the evidenced care-gap lane,
+never interleaved by `health_need_score`. The two have different epistemic status
+and are not comparable on a single need axis. Within the zero-supply lane,
+`zero_supply_geocode_checked` ranks above `zero_observed_supply_unvalidated`.
+
+### Optional Extensions
+
+- **Full-coverage geocoding:** a `--full-coverage` flag geocodes all eligible rows
+  (not just the priority list), with query deduplication for cost control.
+- **WorldPop population weighting (Phase 2):** weight zero-supply deserts by
+  affected population via WorldPop raster + geoBoundaries zonal statistics. Different
+  geospatial dependency footprint; the core feature ships independently.
+
+---
+
+## 13. Known Limitations & Risk Mitigations
 
 ### Acknowledged Gaps
 
 | Gap | Impact | Mitigation |
 |---|---|---|
-| No population denominator | Cannot compute per-capita access | Proxy with density framing; WorldPop upgrade if time |
+| Zero-supply districts dropped (706 → 494) | Strongest desert candidates excluded (survivorship bias) | **(PLANNED §12)** Rebuild from NFHS side; include all 706 with zero-supply annotation |
+| No population denominator | Cannot compute per-capita access | Proxy with density framing; **(PLANNED, optional §12)** WorldPop weighting |
 | No travel-time accessibility | Cannot compute isochrones | Approximate with haversine distance to nearest trustworthy facility |
 | NFHS older than facility data | District context may lag reality | Label as "district context, not facility fact" |
 | No human-verified label set | Cannot claim measured accuracy | Use proxy CIs, sensitivity analysis, active queues |
@@ -546,7 +638,9 @@ flowchart LR
 
 ---
 
-## Planning Category Distribution (Final)
+## Planning Category Distribution
+
+### Current (494 districts — matched supply only)
 
 | Category | Districts | Meaning |
 |---|---|---|
@@ -555,3 +649,18 @@ flowchart LR
 | `supply_record_quality_problem` | 93 | Records broken → fix |
 | `referral_or_capacity_candidate` | 99 | Capacity exists → refer |
 | `mixed_or_monitor` | 279 | Monitor |
+
+### Planned (all 706 districts — adds zero-supply categories)
+
+| Category | Meaning | Priority |
+|---|---|---|
+| `zero_supply_geocode_checked` | Zero supply, geocoding attempted, none confirmed | Highest (hardened desert) |
+| `zero_observed_supply_unvalidated` | Zero supply, no geocoding evidence | Highest (blind spot) |
+| `real_desert_candidate` | Genuine unmet need → deploy/help | High |
+| `phantom_desert_or_verification_gap` | Unverified → verify first | Medium |
+| `supply_record_quality_problem` | Records broken → fix | Medium |
+| `referral_or_capacity_candidate` | Capacity exists → refer | Lower |
+| `mixed_or_monitor` | Monitor | Lowest |
+
+The ~212 newly-included zero-supply districts are split between the two zero-supply
+categories depending on whether geocoder recovery was attempted (see §12).
