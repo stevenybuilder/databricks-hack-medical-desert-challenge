@@ -1,6 +1,8 @@
 """Shared UI helpers: global CSS, header, and small components."""
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -8,36 +10,297 @@ from . import config, data
 
 _CSS = """
 <style>
-/* tighten the page + hide default chrome */
+:root {
+  --mdn-bg: #05080f;
+  --mdn-panel: rgba(8, 15, 26, .86);
+  --mdn-panel-soft: rgba(11, 20, 34, .72);
+  --mdn-line: rgba(148, 163, 184, .22);
+  --mdn-line-strong: rgba(148, 163, 184, .34);
+  --mdn-text: #eaf2ff;
+  --mdn-muted: #93a4b8;
+  --mdn-dim: #607086;
+  --mdn-teal: #2eccc1;
+  --mdn-sky: #66d9ff;
+  --mdn-amber: #ffbe48;
+  --mdn-red: #ff5252;
+}
+
 #MainMenu, footer, header[data-testid="stHeader"] {visibility: hidden;}
-.block-container {padding: 0.6rem 1.4rem 1rem 1.4rem; max-width: 100%;}
+html, body, .stApp, [data-testid="stAppViewContainer"] {
+  background: var(--mdn-bg);
+  color: var(--mdn-text);
+}
+[data-testid="stSidebar"] {background: #07111f;}
+.block-container {
+  padding: .65rem 1.05rem 1rem 1.05rem;
+  max-width: 100%;
+}
+[data-testid="stVerticalBlock"] {gap: .72rem;}
+[data-testid="stMarkdownContainer"], [data-testid="stCaptionContainer"],
+[data-testid="stText"], label, p, span {color: inherit;}
+[data-testid="stCaptionContainer"] {color: var(--mdn-muted);}
+a {color: var(--mdn-sky);}
+hr {border-color: var(--mdn-line);}
 
-/* branded top bar */
-.mdn-topbar {display:flex; align-items:center; gap:.7rem; padding:.5rem .2rem .2rem;}
-.mdn-logo {width:30px;height:30px;border-radius:8px;background:#FF3621;color:#fff;
-  display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;}
-.mdn-title {font-size:1.35rem;font-weight:750;color:#0f172a;line-height:1;}
-.mdn-sub {font-size:.82rem;color:#64748b;margin-top:2px;}
-.mdn-chip {margin-left:auto;font-size:.72rem;font-weight:600;color:#475569;
-  background:#eef2f7;border:1px solid #e2e8f0;border-radius:999px;padding:.28rem .7rem;}
+.mdn-topbar {
+  position: sticky;
+  top: .4rem;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  padding: .55rem .72rem;
+  margin-bottom: .2rem;
+  background: rgba(4, 10, 18, .88);
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .34);
+  backdrop-filter: blur(16px);
+}
+.mdn-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #07111f;
+  border: 1px solid rgba(102, 217, 255, .42);
+  color: var(--mdn-sky);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+}
+.mdn-title {font-size: 1.08rem; font-weight: 760; color: var(--mdn-text); line-height: 1;}
+.mdn-sub {font-size: .76rem; color: var(--mdn-muted); margin-top: 2px;}
+.mdn-chip {
+  margin-left: auto;
+  font-size: .7rem;
+  font-weight: 650;
+  color: #c9d8ea;
+  background: rgba(12, 22, 38, .9);
+  border: 1px solid var(--mdn-line);
+  border-radius: 999px;
+  padding: .25rem .62rem;
+  white-space: nowrap;
+}
+.mdn-orbit-note {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  padding: .7rem .85rem;
+  color: var(--mdn-muted);
+  background: var(--mdn-panel-soft);
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+  font-size: .82rem;
+}
+.mdn-earth-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  padding: .6rem .72rem;
+  background: var(--mdn-panel);
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+}
+.mdn-earth-strip strong {
+  display: block;
+  color: var(--mdn-text);
+  font-size: 1rem;
+  line-height: 1.1;
+}
+.mdn-earth-strip span {color: var(--mdn-muted); font-size: .78rem;}
+.mdn-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--mdn-teal);
+  box-shadow: 0 0 14px rgba(46, 204, 193, .7);
+  flex: 0 0 auto;
+}
+.mdn-card {
+  background: var(--mdn-panel);
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+  padding: .82rem .9rem;
+  min-height: 102px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .17);
+}
+.mdn-card--deploy {border-color: rgba(46, 204, 193, .42);}
+.mdn-card--verify {border-color: rgba(255, 190, 72, .42);}
+.mdn-card--danger {border-color: rgba(255, 82, 82, .42);}
+.mdn-card--info {border-color: rgba(102, 217, 255, .42);}
+.mdn-card-kicker {
+  color: var(--mdn-muted);
+  font-size: .68rem;
+  font-weight: 760;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.mdn-card-value {
+  margin-top: .28rem;
+  color: var(--mdn-text);
+  font-size: 1.36rem;
+  font-weight: 800;
+  line-height: 1.08;
+}
+.mdn-card-caption {
+  margin-top: .32rem;
+  color: var(--mdn-muted);
+  font-size: .78rem;
+  line-height: 1.28;
+}
+.mdn-decision-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: .72rem;
+  padding: .85rem .92rem;
+  background: rgba(8, 15, 26, .9);
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+}
+.mdn-decision-banner strong {
+  display: block;
+  color: var(--mdn-text);
+  font-size: 1.06rem;
+  line-height: 1.15;
+}
+.mdn-decision-banner span {
+  display: block;
+  color: var(--mdn-muted);
+  font-size: .8rem;
+  line-height: 1.35;
+  margin-top: .22rem;
+}
+.mdn-rail {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: .5rem;
+}
+.mdn-rail-step {
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+  padding: .62rem .68rem;
+  background: rgba(8, 15, 26, .68);
+}
+.mdn-rail-step b {
+  display: block;
+  color: var(--mdn-text);
+  font-size: .78rem;
+}
+.mdn-rail-step span {
+  display: block;
+  color: var(--mdn-muted);
+  font-size: .72rem;
+  line-height: 1.25;
+  margin-top: .18rem;
+}
+.mdn-pill-row {display: flex; flex-wrap: wrap; gap: .35rem; margin: .25rem 0 .15rem;}
+.mdn-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--mdn-line);
+  background: rgba(12, 22, 38, .94);
+  color: #c9d8ea;
+  padding: .18rem .5rem;
+  font-size: .7rem;
+  font-weight: 700;
+}
+.mdn-pill--deploy {color:#a7fff3; background:#0d3c3a; border-color:rgba(46,204,193,.35);}
+.mdn-pill--verify {color:#ffe2a4; background:#49310f; border-color:rgba(255,190,72,.35);}
+.mdn-pill--danger {color:#ffc2c2; background:#4a171b; border-color:rgba(255,82,82,.35);}
+.mdn-pill--info {color:#bdefff; background:#0d3142; border-color:rgba(102,217,255,.35);}
+.mdn-pill--muted {color:#d0d8e6; background:#1b2738; border-color:rgba(148,163,184,.28);}
 
-/* metric cards */
-[data-testid="stMetric"] {background:#fff;border:1px solid #e8edf3;border-radius:12px;
-  padding:.7rem .9rem;box-shadow:0 1px 2px rgba(15,23,42,.04);}
-[data-testid="stMetricLabel"] p {font-size:.78rem;color:#64748b;font-weight:600;}
-[data-testid="stMetricValue"] {font-size:1.5rem;font-weight:750;}
+[data-testid="stSelectbox"], [data-testid="stSlider"], [data-testid="stCheckbox"],
+[data-testid="stToggle"], [data-testid="stButton"] {color: var(--mdn-text);}
+div[data-baseweb="select"] > div {
+  background: rgba(8, 15, 26, .95);
+  border-color: var(--mdn-line-strong);
+  border-radius: 8px;
+  min-height: 38px;
+}
+div[data-baseweb="select"] div,
+div[data-baseweb="select"] span,
+div[data-baseweb="select"] input {
+  color: var(--mdn-text) !important;
+}
+div[data-baseweb="select"] svg {fill: var(--mdn-muted) !important;}
+div[data-baseweb="popover"] {background: #07111f;}
+[data-testid="stSlider"] [role="slider"] {background: var(--mdn-sky);}
+[data-testid="stCheckbox"] label, [data-testid="stToggle"] label,
+[data-testid="stSelectbox"] label, [data-testid="stSlider"] label {
+  color: #c8d6e8 !important;
+  font-size: .76rem;
+  font-weight: 650;
+}
+[data-testid="stButton"] button {
+  background: rgba(12, 22, 38, .94);
+  border: 1px solid var(--mdn-line-strong);
+  border-radius: 8px;
+  color: var(--mdn-text);
+}
+[data-testid="stButton"] button:hover {
+  border-color: rgba(102, 217, 255, .55);
+  color: #fff;
+}
 
-/* panel section headers */
-.mdn-panel-h {font-size:.8rem;font-weight:700;letter-spacing:.04em;
-  text-transform:uppercase;color:#94a3b8;margin:.4rem 0 .3rem;}
+button[data-baseweb="tab"] {
+  color: var(--mdn-muted);
+  background: transparent;
+  border-radius: 0;
+  padding: .55rem .75rem;
+}
+button[data-baseweb="tab"][aria-selected="true"] {color: #fff;}
+div[data-baseweb="tab-highlight"] {background: var(--mdn-sky);}
+div[data-baseweb="tab-border"] {background: var(--mdn-line);}
 
-/* legend */
-.mdn-legend-bar {height:10px;border-radius:6px;
-  background:linear-gradient(90deg,#26a69a 0%,#ffca3a 50%,#e53935 100%);}
-.mdn-legend-row {display:flex;justify-content:space-between;font-size:.72rem;color:#64748b;margin-top:3px;}
+[data-testid="stMetric"] {
+  background: var(--mdn-panel);
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+  padding: .68rem .76rem;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .18);
+}
+[data-testid="stMetricLabel"] p {font-size: .73rem; color: var(--mdn-muted); font-weight: 650;}
+[data-testid="stMetricValue"] {font-size: 1.32rem; font-weight: 780; color: var(--mdn-text);}
+[data-testid="stMetricDelta"] svg {display: none;}
+.mdn-panel-h {
+  font-size: .73rem;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #8ea0b7;
+  margin: .35rem 0 .25rem;
+}
+.mdn-muted {color: var(--mdn-muted); font-size: .8rem;}
+[data-testid="stAlert"] {
+  background: rgba(9, 18, 32, .88);
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+  color: var(--mdn-text);
+}
+[data-testid="stDataFrameResizable"] {
+  border: 1px solid var(--mdn-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
 
-/* compact selectboxes */
-div[data-baseweb="select"] > div {border-radius:10px;}
+.mdn-legend-bar {
+  height: 8px;
+  border-radius: 6px;
+  background: linear-gradient(90deg,#2eccc1 0%,#ffbe48 50%,#ff5252 100%);
+  border: 1px solid rgba(255, 255, 255, .12);
+}
+.mdn-legend-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: .7rem;
+  color: var(--mdn-muted);
+  margin-top: 3px;
+}
 </style>
 """
 
@@ -50,23 +313,78 @@ def header() -> None:
     st.markdown(
         f"""
         <div class="mdn-topbar">
-          <div class="mdn-logo">◆</div>
+          <div class="mdn-logo">M</div>
           <div>
             <div class="mdn-title">{config.APP_TITLE}</div>
             <div class="mdn-sub">{config.APP_TAGLINE}</div>
           </div>
-          <div class="mdn-chip">Databricks Apps &amp; Agents for Good · Medical Desert Planner</div>
+          <div class="mdn-chip">India · evidence-weighted planning · uncertainty visible</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
+def stat_card(label: str, value: str, caption: str = "", tone: str = "neutral") -> None:
+    tone_class = {
+        "deploy": "mdn-card--deploy",
+        "verify": "mdn-card--verify",
+        "danger": "mdn-card--danger",
+        "info": "mdn-card--info",
+    }.get(tone, "")
+    st.markdown(
+        f"""
+        <div class="mdn-card {tone_class}">
+          <div class="mdn-card-kicker">{html.escape(str(label))}</div>
+          <div class="mdn-card-value">{html.escape(str(value))}</div>
+          <div class="mdn-card-caption">{html.escape(str(caption))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def decision_banner(title: str, subtitle: str, tone: str = "info") -> None:
+    pill_class = {
+        "deploy": "mdn-pill--deploy",
+        "verify": "mdn-pill--verify",
+        "danger": "mdn-pill--danger",
+        "info": "mdn-pill--info",
+    }.get(tone, "mdn-pill--muted")
+    label = {
+        "deploy": "Deploy",
+        "verify": "Verify",
+        "danger": "Caution",
+        "info": "Evidence",
+    }.get(tone, "Context")
+    st.markdown(
+        f"""
+        <div class="mdn-decision-banner">
+          <span class="mdn-pill {pill_class}">{html.escape(label)}</span>
+          <div>
+            <strong>{html.escape(str(title))}</strong>
+            <span>{html.escape(str(subtitle))}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def workflow_rail(steps: list[tuple[str, str]]) -> None:
+    body = "".join(
+        f"""<div class="mdn-rail-step"><b>{html.escape(title)}</b>
+        <span>{html.escape(text)}</span></div>"""
+        for title, text in steps
+    )
+    st.markdown(f'<div class="mdn-rail">{body}</div>', unsafe_allow_html=True)
+
+
 _BADGE = {
-    "Passed checks": ("#0f766e", "#ccfbf1"),
-    "Needs review": ("#92400e", "#fef3c7"),
-    "Contradicted / geo-invalid": ("#991b1b", "#fee2e2"),
-    "Unknown": ("#475569", "#e2e8f0"),
+    "Passed checks": ("#a7fff3", "#0d3c3a"),
+    "Needs review": ("#ffe2a4", "#49310f"),
+    "Contradicted / geo-invalid": ("#ffc2c2", "#4a171b"),
+    "Unknown": ("#d0d8e6", "#1b2738"),
 }
 
 
@@ -82,14 +400,14 @@ def facility_card(f: dict) -> None:
 
     st.markdown(
         f"""
-        <div style="border:1px solid #e8edf3;border-radius:12px;padding:.9rem 1rem;
-             margin-top:.6rem;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.06)">
+        <div style="border:1px solid rgba(148,163,184,.24);border-radius:8px;padding:.9rem 1rem;
+             margin-top:.6rem;background:rgba(8,15,26,.88);box-shadow:0 10px 24px rgba(0,0,0,.22)">
           <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
-            <span style="font-size:1.05rem;font-weight:700;color:#0f172a">{name}</span>
+            <span style="font-size:1.05rem;font-weight:700;color:#eaf2ff">{name}</span>
             <span style="background:{bg};color:{fg};font-size:.72rem;font-weight:700;
                   padding:.2rem .6rem;border-radius:999px">{status}</span>
           </div>
-          <div style="font-size:.83rem;color:#64748b;margin-top:.25rem">
+          <div style="font-size:.83rem;color:#93a4b8;margin-top:.25rem">
             {f.get('facility_type','—')} · {loc or '—'} · geo: {f.get('geo_quality','—')}
           </div>
         </div>
@@ -134,7 +452,7 @@ def facility_card(f: dict) -> None:
     st.dataframe(pd.DataFrame(explain_rows), hide_index=True, width="stretch", height=230)
     if status != "Passed checks":
         st.warning("This facility is flagged — verify the claim against the source "
-                   "before relying on it.", icon="⚠️")
+                   "before relying on it.")
 
 
 def _num(v, default=float("nan")):
@@ -167,9 +485,9 @@ def reason_chips(labels: list[str]) -> None:
         st.caption("No reason codes recorded.")
         return
     chips = "".join(
-        f"""<span style="display:inline-block;background:#f8fafc;border:1px solid #dbe5ef;
-        border-radius:999px;padding:.18rem .55rem;margin:.12rem;font-size:.75rem;
-        font-weight:650;color:#334155">{label}</span>"""
+        f"""<span style="display:inline-block;background:rgba(12,22,38,.95);
+        border:1px solid rgba(148,163,184,.26);border-radius:999px;padding:.18rem .55rem;
+        margin:.12rem;font-size:.75rem;font-weight:650;color:#c9d8ea">{label}</span>"""
         for label in labels
     )
     st.markdown(chips, unsafe_allow_html=True)
@@ -179,15 +497,17 @@ def region_detail(row: pd.Series, specialty: str) -> None:
     """Full district detail: recommendation, patient conditions, supply, evidence."""
     cat = str(row.get("planning_category", "mixed_or_monitor"))
     chip, rec = data.PLANNING.get(cat, data.PLANNING["mixed_or_monitor"])
-    name = f"{row.get('district_name','—')}, {row.get('state_ut','—')}"
+    district = str(row.get("district_name", "—") or "—").strip()
+    state = str(row.get("state_ut", "—") or "—").strip()
+    name = f"{district}, {state}"
 
     st.markdown(
         f"""<div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-top:.3rem">
-        <span style="font-size:1.15rem;font-weight:750;color:#0f172a">{name}</span>
-        <span style="background:#eef2f7;border:1px solid #e2e8f0;border-radius:999px;
-        padding:.22rem .7rem;font-size:.78rem;font-weight:700;color:#334155">{chip}</span>
+        <span style="font-size:1.15rem;font-weight:750;color:#eaf2ff">{name}</span>
+        <span style="background:rgba(12,22,38,.95);border:1px solid rgba(148,163,184,.26);border-radius:999px;
+        padding:.22rem .7rem;font-size:.78rem;font-weight:700;color:#c9d8ea">{chip}</span>
         </div>""", unsafe_allow_html=True)
-    st.info(rec, icon="🧭")
+    st.info(rec)
 
     obs = _num(row.get("observed_facility_rows"))
     trust = _num(row.get("trustworthy_supply_rows"))
@@ -257,17 +577,17 @@ def verification_detail(row: pd.Series) -> None:
                 unsafe_allow_html=True)
     st.markdown(
         f"""
-        <div style="border:1px solid #e8edf3;border-radius:12px;padding:.9rem 1rem;
-             margin-top:.2rem;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.06)">
-          <div style="font-size:1rem;font-weight:750;color:#0f172a">{name}</div>
-          <div style="font-size:.83rem;color:#64748b;margin-top:.2rem">{loc or '—'}</div>
+        <div style="border:1px solid rgba(148,163,184,.24);border-radius:8px;padding:.9rem 1rem;
+             margin-top:.2rem;background:rgba(8,15,26,.88);box-shadow:0 10px 24px rgba(0,0,0,.22)">
+          <div style="font-size:1rem;font-weight:750;color:#eaf2ff">{name}</div>
+          <div style="font-size:.83rem;color:#93a4b8;margin-top:.2rem">{loc or '—'}</div>
           <div style="display:flex;gap:.45rem;flex-wrap:wrap;margin-top:.55rem">
-            <span style="background:#eef2f7;border:1px solid #e2e8f0;border-radius:999px;
-                  padding:.18rem .55rem;font-size:.76rem;font-weight:700;color:#334155">{seed}</span>
-            <span style="background:#fff7ed;border:1px solid #fed7aa;border-radius:999px;
-                  padding:.18rem .55rem;font-size:.76rem;font-weight:700;color:#9a3412">{concern}</span>
-            <span style="background:#ecfdf5;border:1px solid #bbf7d0;border-radius:999px;
-                  padding:.18rem .55rem;font-size:.76rem;font-weight:700;color:#166534">{channel}</span>
+            <span style="background:#1b2738;border:1px solid rgba(148,163,184,.28);border-radius:999px;
+                  padding:.18rem .55rem;font-size:.76rem;font-weight:700;color:#d0d8e6">{seed}</span>
+            <span style="background:#49310f;border:1px solid rgba(255,190,72,.35);border-radius:999px;
+                  padding:.18rem .55rem;font-size:.76rem;font-weight:700;color:#ffe2a4">{concern}</span>
+            <span style="background:#0d3c3a;border:1px solid rgba(46,204,193,.35);border-radius:999px;
+                  padding:.18rem .55rem;font-size:.76rem;font-weight:700;color:#a7fff3">{channel}</span>
           </div>
         </div>
         """,
@@ -340,10 +660,12 @@ def active_district_detail(row: pd.Series, specialty: str) -> None:
     """Explain one row from active_learning_district_queue.csv."""
     st.markdown('<div class="mdn-panel-h">Why this district is fragile</div>',
                 unsafe_allow_html=True)
-    title = f"{row.get('district_name', '—')}, {row.get('state_ut', '—')}"
+    district = str(row.get("district_name", "—") or "—").strip()
+    state = str(row.get("state_ut", "—") or "—").strip()
+    title = f"{district}, {state}"
     st.markdown(f"**{title}**")
     chip, rec = data.PLANNING.get(str(row.get("planning_category", "")), data.PLANNING["mixed_or_monitor"])
-    st.info(f"{chip}: {rec}", icon="🧭")
+    st.info(f"{chip}: {rec}")
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Active score", _fmt(row.get("active_uncertainty_score")))

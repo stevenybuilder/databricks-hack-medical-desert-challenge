@@ -260,15 +260,15 @@ COND_LABELS = {
 
 # planning_category -> (chip label, recommendation sentence)
 PLANNING = {
-    "real_desert_candidate": ("🚑 Deploy / build",
+    "real_desert_candidate": ("Deploy / build",
         "Genuine unmet need with little trustworthy supply — strongest case to deploy."),
-    "phantom_desert_or_verification_gap": ("🔎 Verify first",
+    "phantom_desert_or_verification_gap": ("Verify first",
         "Looks empty, but the few records are unverified — verify before acting."),
-    "supply_record_quality_problem": ("🛠 Fix records",
+    "supply_record_quality_problem": ("Fix records",
         "Facilities likely exist but records are broken — fix data before planning."),
-    "referral_or_capacity_candidate": ("➡️ Refer (capacity exists)",
+    "referral_or_capacity_candidate": ("Refer (capacity exists)",
         "Trustworthy capacity is present — route patients here."),
-    "mixed_or_monitor": ("👁 Monitor",
+    "mixed_or_monitor": ("Monitor",
         "Mixed signals — monitor; no single clear action."),
 }
 
@@ -549,10 +549,10 @@ def supervised_model_report() -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     summary = pd.DataFrame(
         [
             {"Metric": "Primary model", "Value": policy.get("primary_model", "")},
-            {"Metric": "Input rows", "Value": report.get("input_rows", 0)},
-            {"Metric": "Trainable rows", "Value": report.get("trainable_rows", 0)},
-            {"Metric": "Trained tasks", "Value": report.get("trained_tasks", 0)},
-            {"Metric": "Skipped tasks", "Value": report.get("skipped_tasks", 0)},
+            {"Metric": "Input rows", "Value": f"{report.get('input_rows', 0):,}"},
+            {"Metric": "Trainable rows", "Value": f"{report.get('trainable_rows', 0):,}"},
+            {"Metric": "Trained tasks", "Value": f"{report.get('trained_tasks', 0):,}"},
+            {"Metric": "Skipped tasks", "Value": f"{report.get('skipped_tasks', 0):,}"},
             {"Metric": "Abstention rule", "Value": policy.get("abstention_rule", "")},
         ]
     )
@@ -584,6 +584,7 @@ def _coerce_known_numeric(df: pd.DataFrame) -> pd.DataFrame:
     numeric_fragments = [
         "_score", "_rate", "_ci_low", "_ci_high", "_rows", "_rank", "_width",
         "_km", "_value", "_low", "_high", "_n", "confidence",
+        "pct", "denominator", "wilson", "bayes",
     ]
     for col in df.columns:
         if any(fragment in col for fragment in numeric_fragments):
@@ -591,6 +592,49 @@ def _coerce_known_numeric(df: pd.DataFrame) -> pd.DataFrame:
             if converted.notna().any():
                 df[col] = converted
     return df
+
+
+def statistical_decision_report() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """Load category volumes and statistical decision policy artifacts."""
+    volume = _read_optional_csv(config.decision_category_volume_summary_path())
+    policy_path = config.statistical_decision_policy_report_path()
+    policy = json.loads(policy_path.read_text(encoding="utf-8")) if policy_path.exists() else {}
+
+    if not volume.empty:
+        volume = _coerce_known_numeric(volume)
+        volume["Pct"] = volume["pct"].map(lambda value: _pct(value, digits=1))
+        volume["Wilson 95%"] = volume.apply(
+            lambda row: f"{_pct(row.get('wilson_95_low'), digits=1)} to {_pct(row.get('wilson_95_high'), digits=1)}",
+            axis=1,
+        )
+        volume["Bayes 95%"] = volume.apply(
+            lambda row: f"{_pct(row.get('bayes_95_low'), digits=1)} to {_pct(row.get('bayes_95_high'), digits=1)}",
+            axis=1,
+        )
+
+    concepts = pd.DataFrame(policy.get("concepts", []))
+    if not concepts.empty:
+        concepts = concepts.rename(
+            columns={
+                "concept": "Concept",
+                "use_now": "Use now",
+                "where_applied": "Where applied",
+                "why_relevant": "Why relevant",
+            }
+        )
+        concepts["Use now"] = concepts["Use now"].map(lambda value: "Yes" if bool(value) else "Not yet")
+
+    rules = pd.DataFrame(policy.get("decision_rules_already_in_pipeline", []))
+    if not rules.empty:
+        rules = rules.rename(
+            columns={
+                "decision": "Decision",
+                "rule": "Rule",
+                "statistical_role": "Statistical role",
+            }
+        )
+
+    return volume, concepts, rules, policy
 
 
 def _json_list(raw) -> list[str]:

@@ -18,10 +18,25 @@ env/
 *service-account*.json
 .gcloud/
 secrets/
+.playwright-cli/
+output/playwright/
 
 # Google Maps/Geocoding API responses can include keys in URLs and public contact/address evidence.
 output/data/google_geocoding_results*.csv
 output/data/google_geocoding_raw*.jsonl
 output/data/google_maps_geocoding_*.csv
 output/data/google_maps_geocoding_*.jsonl
+output/data/geo_coordinate_correction_candidates.csv
+output/data/geo_coordinate_correction_summary.json
+output/data/geo_validation_remaining_severe_candidates.csv
+output/data/geo_validation_remaining_severe_ai_prompts.jsonl
+output/data/claim_validation_queue.csv
+output/data/claim_validation_summary.json
+output/data/entity_resolution_candidate_pairs.csv
+output/data/entity_resolution_clusters.csv
+output/data/entity_resolution_summary.json
+output/data/missing_data_remediation_summary.csv
+output/data/human_verification_seed_queue.csv
+output/data/missing_data_seed_summary.json
+output/data/planner_decisions.sqlite
 output/sql/google_geocoding_results*.sql

@@ -90,11 +90,11 @@ Per region, the doctor gets a 4-part answer, all from existing cleaned columns:
 
 | Category | # districts | Doctor-facing meaning |
 |---|---|---|
-| `real_desert_candidate` | 8 | Genuine unmet need → go help / deploy |
-| `phantom_desert_or_verification_gap` | 15 | Looks empty but unverified → verify first |
-| `supply_record_quality_problem` | 93 | Facilities exist, records broken → fix |
-| `referral_or_capacity_candidate` | 99 | Capacity exists → refer here |
-| `mixed_or_monitor` | 279 | Monitor |
+| `real_desert_candidate` | 31 | Genuine unmet need → go help / deploy |
+| `phantom_desert_or_verification_gap` | 54 | Looks empty but unverified → verify first |
+| `supply_record_quality_problem` | 89 | Facilities exist, records broken → fix |
+| `referral_or_capacity_candidate` | 90 | Capacity exists → refer here |
+| `mixed_or_monitor` | 230 | Monitor |
 
 ## Screens (implemented as three tabs sharing the specialty filter)
 
