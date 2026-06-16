@@ -597,7 +597,8 @@ def _coverage_snapshot(facilities, filtered, districts) -> None:
     st.altair_chart(
         charts.trust_distribution_bar(int(tier.get("High", 0)), int(tier.get("Medium", 0)),
                                       int(tier.get("Verify", 0))),
-        use_container_width=True)
+        use_container_width=True,
+        key="map_trust_distribution_chart")
     st.caption("High = passes all checks · Medium = some supply fields estimated (CatBoost) · "
                "Verify = missing supply. Automated checks, not human verification.")
 

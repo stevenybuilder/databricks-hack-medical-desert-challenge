@@ -7,6 +7,9 @@ free-text box maps the question to one of these same actions via a deterministic
 router — there is no free-text LLM, so every answer stays grounded in your data.
 """
 from __future__ import annotations
+
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -41,6 +44,64 @@ _CONDITION_HELP = {
     "Oral cancer exam": "Low exam coverage suggests oral/dental screening outreach.",
     "Health insurance coverage": "Low coverage means referrals may fail unless planners include enrollment support.",
 }
+
+
+def _route_slug(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text == "?":
+        return "?"
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def route_mode_from_query(value: object) -> str | None:
+    """Resolve a URL demo mode to one of the existing Copilot chip modes."""
+    slug = _route_slug(value)
+    if not slug:
+        return None
+
+    aliases = {
+        "1": "verifiable_deserts",
+        "desert": "verifiable_deserts",
+        "deserts": "verifiable_deserts",
+        "deployment": "verifiable_deserts",
+        "deployment districts": "verifiable_deserts",
+        "districts": "verifiable_deserts",
+        "find deployment districts": "verifiable_deserts",
+        "gap": "verifiable_deserts",
+        "gaps": "verifiable_deserts",
+        "real desert": "verifiable_deserts",
+        "real deserts": "verifiable_deserts",
+        "verifiable desert": "verifiable_deserts",
+        "verifiable deserts": "verifiable_deserts",
+        "2": "drill_conditions",
+        "choose doctor specialty": "drill_conditions",
+        "condition": "drill_conditions",
+        "conditions": "drill_conditions",
+        "doctor": "drill_conditions",
+        "specialty": "drill_conditions",
+        "3": "scenario",
+        "build deployment plan": "scenario",
+        "deployment plan": "scenario",
+        "plan": "scenario",
+        "recommend": "scenario",
+        "scenario": "scenario",
+        "4": "whatif",
+        "clinic": "whatif",
+        "simulate": "whatif",
+        "test clinic scenario": "whatif",
+        "what if": "whatif",
+        "whatif": "whatif",
+        "?": "explain",
+        "explain": "explain",
+        "explain evidence": "explain",
+        "evidence": "explain",
+        "method": "explain",
+        "methods": "explain",
+        "trust": "explain",
+    }
+    aliases.update({_route_slug(key): key for key, _, _ in CHIPS})
+    aliases.update({_route_slug(label): key for key, _, label in CHIPS})
+    return aliases.get(slug)
 
 # Copilot styling consumes the SHARED design tokens (defined in ui.inject_css's
 # :root, injected first in app entry) so the Copilot matches the rest of the app
@@ -246,7 +307,8 @@ def _mode_verifiable_deserts(facilities, districts, specialty):
                "trusted facility records. For zero-facility deserts, absence is the "
                "signal; call or verify before acting.")
     with ui.detail("Open chart and full evidence view"):
-        st.altair_chart(charts.desert_quadrant(districts), use_container_width=True)
+        st.altair_chart(charts.desert_quadrant(districts), use_container_width=True,
+                        key="copilot_desert_quadrant_chart")
         st.caption("Top-right = high gap and well-evidenced (act now). "
                    "Top-left = high gap but low confidence (verify first). "
                    "Dashed lines: gap 0.6 / confidence 0.5.")
@@ -268,7 +330,8 @@ def _mode_drill_conditions(facilities, districts, specialty):
     st.caption(f"Biggest gap: **{worst['Condition']}** ({worst['District %']}% vs "
                f"{worst['National %']}% national). Use this to choose which clinical team to deploy.")
     with ui.detail("Open condition chart"):
-        st.altair_chart(charts.condition_gaps(conds), use_container_width=True)
+        st.altair_chart(charts.condition_gaps(conds), use_container_width=True,
+                        key="copilot_condition_gaps_chart")
         st.caption("Bar = district · gray tick = national median.")
 
 

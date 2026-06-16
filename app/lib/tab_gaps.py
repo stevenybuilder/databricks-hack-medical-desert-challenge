@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from contextlib import contextmanager
 
 import pandas as pd
 import streamlit as st
 
-from . import data, ui, charts, decisions
+from . import data, ui, decisions
 from .tab_common import (
     ACTION_FILTERS,
     _action_label,
@@ -104,6 +105,8 @@ _PHOTO_URL_HINTS = (
     "album",
 )
 
+_PROVIDER_DISTRICT_EVIDENCE_COLS = ("facility_name", "address_city", "claim_text")
+
 
 @contextmanager
 def _glass_panel():
@@ -166,6 +169,25 @@ def _wow_banner(zero_trust: int, n: int, pct: float) -> None:
         '<span style="color:var(--text);font-size:1.0rem;line-height:1.4;flex:1 1 16rem">'
         'of the worst care-gap districts have <strong>no hard-check-passing claims</strong>. '
         f'Prioritize these for call/verify before staffing.</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _ranking_source_strip() -> None:
+    """Compact citation/provenance line for headline rankings."""
+    chips = [
+        ("NFHS-5 need", "district health indicators"),
+        ("FDR provider snapshot", "claim rows, not a verified census"),
+        ("Wilson intervals", "in detail"),
+    ]
+    chip_html = "".join(
+        '<span class="mdn-pill mdn-pill--muted" '
+        f'title="{html.escape(tip, quote=True)}">{html.escape(label)}</span>'
+        for label, tip in chips
+    )
+    st.markdown(
+        '<div class="mdn-pill-row" style="margin:-.15rem 0 .35rem">'
+        f'{chip_html}</div>',
         unsafe_allow_html=True,
     )
 
@@ -322,21 +344,115 @@ def _claim_evidence_line(row: pd.Series, specialty: str, domain: str) -> str:
     return f"Claim: {claim} · Source: {source}"
 
 
+def _clean_provider_evidence_text(raw) -> str:
+    if raw is None:
+        return ""
+    try:
+        if pd.isna(raw):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(raw).strip()
+    return "" if text.casefold() in {"", "nan", "none", "null"} else text
+
+
+def _normalize_district_phrase(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(text).casefold()).split())
+
+
+def _district_phrase_in_text(district: str, text: str) -> bool:
+    phrase = _normalize_district_phrase(district)
+    haystack = _normalize_district_phrase(text)
+    if not phrase or not haystack:
+        return False
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", haystack))
+
+
+def _state_district_names(districts: pd.DataFrame, selected: pd.Series) -> list[str]:
+    if (
+        districts is None
+        or districts.empty
+        or not {"district_name", "state_ut"}.issubset(districts.columns)
+    ):
+        return []
+    state = str(selected.get("state_ut", "") or "").strip()
+    if not state:
+        return []
+    same_state = districts[
+        districts["state_ut"].astype(str).str.strip().eq(state)
+    ]
+    names = {
+        str(name).strip()
+        for name in same_state["district_name"].dropna()
+        if str(name).strip()
+    }
+    return sorted(names, key=len, reverse=True)
+
+
+def _provider_evidence_other_district(
+    row: pd.Series,
+    selected: pd.Series,
+    district_names: list[str],
+) -> str:
+    """Return a strongly mentioned non-selected district, if visible evidence has one."""
+    selected_key = _normalize_district_phrase(
+        str(selected.get("district_name", "") or "")
+    )
+    if not selected_key or not district_names:
+        return ""
+
+    city_key = _normalize_district_phrase(
+        _clean_provider_evidence_text(row.get("address_city"))
+    )
+    for district in district_names:
+        district_key = _normalize_district_phrase(district)
+        if not district_key or district_key == selected_key:
+            continue
+        if city_key and city_key == district_key:
+            return district
+
+    evidence = " ".join(
+        _clean_provider_evidence_text(row.get(col))
+        for col in _PROVIDER_DISTRICT_EVIDENCE_COLS
+    )
+    for district in district_names:
+        district_key = _normalize_district_phrase(district)
+        if not district_key or district_key == selected_key:
+            continue
+        if len(district_key.replace(" ", "")) < 5:
+            continue
+        if _district_phrase_in_text(district, evidence):
+            return district
+    return ""
+
+
 def _provider_candidates(
     facilities: pd.DataFrame,
     selected: pd.Series,
     specialty: str,
+    districts: pd.DataFrame,
     n: int = 2,
-) -> tuple[pd.DataFrame, str]:
-    """Return exact district providers, then state-reference providers if district is empty."""
+) -> tuple[pd.DataFrame, str, int]:
+    """Return clean district providers, then state/national examples if local evidence conflicts."""
     if facilities is None or facilities.empty:
-        return pd.DataFrame(), "Provider source unavailable"
+        return pd.DataFrame(), "Provider source unavailable", 0
     district = str(selected.get("district_name", "") or "").strip()
     state = str(selected.get("state_ut", "") or "").strip()
     exact = facilities[
         (facilities.get("district_name").astype(str).str.strip() == district)
         & (facilities.get("state_ut").astype(str).str.strip() == state)
     ].copy()
+    quarantined_count = 0
+    district_names = _state_district_names(districts, selected)
+    if not exact.empty and district_names:
+        other_district = exact.apply(
+            lambda row: _provider_evidence_other_district(row, selected, district_names),
+            axis=1,
+        )
+        quarantine_mask = other_district.astype(bool)
+        quarantined_count = int(quarantine_mask.sum())
+        exact = exact.loc[~quarantine_mask].copy()
+
     scope = "District-mapped provider claims"
     candidates = exact
     if candidates.empty and state:
@@ -380,11 +496,18 @@ def _provider_candidates(
         ["_verified_sort", "_trust_sort", "_source_sort", "_quality_sort"],
         ascending=False,
     ).head(n)
-    return candidates, scope
+    return candidates, scope, quarantined_count
 
 
-def _provider_cards(facilities: pd.DataFrame, selected: pd.Series, specialty: str) -> None:
-    providers, scope = _provider_candidates(facilities, selected, specialty)
+def _provider_cards(
+    facilities: pd.DataFrame,
+    selected: pd.Series,
+    specialty: str,
+    districts: pd.DataFrame,
+) -> None:
+    providers, scope, quarantined_count = _provider_candidates(
+        facilities, selected, specialty, districts
+    )
     ui.panel_header("Provider claims")
     if providers.empty:
         st.info("No provider claims available.")
@@ -434,8 +557,14 @@ def _provider_cards(facilities: pd.DataFrame, selected: pd.Series, specialty: st
         )
     cards_html = '<div class="mdn-provider-grid">' + "".join(cards) + '</div>'
     if scope != "District-mapped provider claims":
-        st.info("No source-backed provider claims are mapped to this district yet.")
-        with ui.detail(f"Show {scope.lower()}"):
+        if quarantined_count:
+            st.info(
+                "District-keyed provider evidence names another district, so it is "
+                "not counted as local provider evidence here."
+            )
+        else:
+            st.info("No source-backed provider claims are mapped to this district yet.")
+        with ui.detail(f"Show {scope.lower()} (not local evidence)"):
             st.caption(
                 f"{scope}. These examples are dynamic, but they are not local evidence "
                 "for the selected district."
@@ -527,6 +656,7 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
     # 1) The wow stat — single bold anchor (honest, recomputed live).
     zero_trust, wow_n, wow_pct = _wow_stat(ranked_all)
     _wow_banner(zero_trust, wow_n, wow_pct)
+    _ranking_source_strip()
 
     # 2) ≤2 KPI cards: where to act, and how big the deploy queue is.
     ui.kpi_row(
@@ -569,7 +699,7 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
     selected = _selected_or_first(ev, shortlist)
     if selected is not None:
         _planner_brief(selected, specialty, scoped_districts)
-        _provider_cards(facilities, selected, specialty)
+        _provider_cards(facilities, selected, specialty, districts)
         _plan_affordances(selected, gap_label)
 
     # ===================== DEPTH ON DEMAND ==================================
@@ -635,7 +765,7 @@ def _plan_affordances(selected: pd.Series, gap_label: str) -> None:
 
 
 def _panel_ranking(ranked_all: pd.DataFrame, gap_label: str) -> None:
-    """Full leaderboard: action filter + action-mix chart + the 30-row table."""
+    """Full leaderboard: action filter + compact counts + the 30-row table."""
     filter_choice = st.segmented_control(
         "Action filter",
         list(ACTION_FILTERS.keys()),
@@ -660,7 +790,7 @@ def _panel_ranking(ranked_all: pd.DataFrame, gap_label: str) -> None:
         .reset_index(name="Districts")
     )
     ui.panel_header("Action mix")
-    st.altair_chart(charts.action_mix(mix), use_container_width=True)
+    st.dataframe(mix, hide_index=True, width="stretch", height=175)
 
     table = pd.DataFrame({
         "Rank": ranked["Rank"],
@@ -695,13 +825,29 @@ def _panel_ranking(ranked_all: pd.DataFrame, gap_label: str) -> None:
 
 
 def _panel_at_a_glance(districts: pd.DataFrame) -> None:
-    """Desert fingerprints: small-multiples of the worst districts' condition gaps."""
-    st.altair_chart(
-        charts.small_multiples_deserts(districts, data.district_top_conditions, n=6),
-        use_container_width=True,
-    )
-    st.caption("Each panel = one of the worst care-gap districts · bars = its top "
-               "medical-condition gaps · deeper red = further above the national median.")
+    """Desert fingerprints: table of the worst districts' top condition gap."""
+    src = districts.copy()
+    src["_gap"] = pd.to_numeric(src.get("care_gap_score"), errors="coerce")
+    src = src.dropna(subset=["_gap"]).sort_values("_gap", ascending=False).head(8)
+    rows = []
+    for _, row in src.iterrows():
+        conds = data.district_top_conditions(row, districts, n=1)
+        if conds.empty:
+            continue
+        top = conds.iloc[0]
+        rows.append({
+            "District": f"{row.get('district_name', '—')}, {row.get('state_ut', '—')}",
+            "Care gap": _num(row.get("care_gap_score")),
+            "Top condition": top.get("Condition", "—"),
+            "District %": top.get("District %", None),
+            "National %": top.get("National %", None),
+            "Gap pts": top.get("Δ vs national", None),
+        })
+    if not rows:
+        st.caption("No condition indicators available for the current district scope.")
+        return
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", height=320)
+    st.caption("Top condition per high-gap district. Technical charts stay out of the default demo path.")
 
 
 def _panel_method(districts: pd.DataFrame, wow_n: int) -> None:

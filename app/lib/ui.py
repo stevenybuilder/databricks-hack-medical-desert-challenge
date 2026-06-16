@@ -2249,7 +2249,8 @@ def region_detail(row: pd.Series, specialty: str, districts: pd.DataFrame | None
 
     with detail("More detail: medical-condition gaps"):
         if not conds.empty:
-            st.altair_chart(charts.condition_gaps(conds), use_container_width=True)
+            st.altair_chart(charts.condition_gaps(conds), use_container_width=True,
+                            key="region_condition_gaps_chart")
             worst = conds.iloc[0]
             st.caption(
                 f"Worst gap: {worst['Condition']} "
@@ -2261,7 +2262,8 @@ def region_detail(row: pd.Series, specialty: str, districts: pd.DataFrame | None
 
     with detail("More detail: score formula"):
         breakdown, total, _ = data.care_gap_breakdown(row)
-        st.altair_chart(charts.care_gap_contributions(breakdown), use_container_width=True)
+        st.altair_chart(charts.care_gap_contributions(breakdown), use_container_width=True,
+                        key="region_care_gap_contributions_chart")
         st.caption(f"Care-gap score = {total:.2f}: 0.55 need + 0.25 supply scarcity + 0.20 low trust.")
 
     with detail("Why this recommendation"):
