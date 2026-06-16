@@ -25,6 +25,7 @@ from .tab_common import (
     ACTION_FILTERS,
     _action_label,
     _action_tone,
+    _district_scope_control,
     _fmt_num,
     _fmt_pct,
     _ranked_districts,
@@ -163,7 +164,7 @@ def _wow_banner(zero_trust: int, n: int, pct: float) -> None:
         'letter-spacing:-.02em;font-variant-numeric:tabular-nums">'
         f'{zero_trust}/{n}</span>'
         '<span style="color:var(--text);font-size:1.0rem;line-height:1.4;flex:1 1 16rem">'
-        'of the worst care-gap districts have <strong>no verified supply</strong>. '
+        'of the worst care-gap districts have <strong>no provider claims passing checks</strong>. '
         f'Prioritize these for doctor deployment.</span></div>',
         unsafe_allow_html=True,
     )
@@ -458,7 +459,7 @@ def _planner_brief(
     is_zero = bool(selected.get("zero_facility_desert", False))
     trust_rate = pd.to_numeric(selected.get("trustworthy_supply_rate"), errors="coerce")
     supply = "No mapped provider" if is_zero else (
-        "unknown trustworthy supply" if pd.isna(trust_rate) else f"{trust_rate * 100:.0f}% trustworthy supply"
+        "provider trust unknown" if pd.isna(trust_rate) else f"Provider trust {trust_rate * 100:.0f}%"
     )
     doctors = (
         "Deploy a mobile team; call or verify local provider gaps."
@@ -480,30 +481,32 @@ def _planner_brief(
 
 
 def _shortlist_table(ranked: pd.DataFrame, gap_label: str) -> pd.DataFrame:
-    """Compact, decision-first table: rank, place, action, gap, trust supply."""
+    """Compact, decision-first table: rank, place, action, gap, provider trust."""
     return pd.DataFrame({
         "Rank": ranked["Rank"],
         "District": ranked["district_name"],
         "State": ranked["state_ut"],
         "Action": ranked["Action"],
         gap_label: pd.to_numeric(ranked["gap"], errors="coerce"),
-        "Trust supply %": pd.to_numeric(ranked["trustworthy_supply_rate"], errors="coerce") * 100,
+        "Provider trust %": pd.to_numeric(ranked["trustworthy_supply_rate"], errors="coerce") * 100,
     })
 
 
 def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
-    ranked_all, gap_label = _ranked_districts(districts, specialty)
     ui.tab_intro(
         "Doctor deployment shortlist",
         f"{specialty} · highest need first; call or verify claims",
     )
     _guide_steps()
+    _, scoped_districts = _district_scope_control(districts, "gaps_district_scope_filter")
+
+    ranked_all, gap_label = _ranked_districts(scoped_districts, specialty)
     if ranked_all.empty:
-        st.info("No district rows are available for this specialty lens.")
+        st.info("No district rows match this specialty and provider-claim filter.")
         return
 
     top = ranked_all.iloc[0]
-    deploy_count = int(districts["planning_category"].eq("real_desert_candidate").sum())
+    deploy_count = int(scoped_districts["planning_category"].eq("real_desert_candidate").sum())
 
     # ============================ FIRST GLANCE ===============================
     # 1) The wow stat — single bold anchor (honest, recomputed live).
@@ -538,10 +541,10 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
                 "Rank": st.column_config.NumberColumn(format="%d"),
                 gap_label: st.column_config.NumberColumn(
                     f"{gap_label} ▲ worse", format="%.2f",
-                    help="Higher = more unmet need with less trustworthy supply."),
-                "Trust supply %": st.column_config.ProgressColumn(
-                    "Trust supply ▲ better", format="%d%%", min_value=0, max_value=100,
-                    help="Share of observed facilities passing trust checks. Higher is better."),
+                    help="Higher = more unmet need with fewer claims passing checks."),
+                "Provider trust %": st.column_config.ProgressColumn(
+                    "Provider trust ▲ better", format="%d%%", min_value=0, max_value=100,
+                    help="Share of mapped provider claims passing automated checks. Higher is better."),
             },
         )
         st.caption("Select a row to inspect. More detail below.")
@@ -550,7 +553,7 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
     #    with the inline "add to My Plan" affordances (E8).
     selected = _selected_or_first(ev, shortlist)
     if selected is not None:
-        _planner_brief(selected, specialty, districts)
+        _planner_brief(selected, specialty, scoped_districts)
         _provider_cards(facilities, selected, specialty)
         _plan_affordances(selected, gap_label)
 
@@ -561,9 +564,9 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
     with ui.detail("More detail: full ranking table"):
         _panel_ranking(ranked_all, gap_label)
     with ui.detail("More detail: condition chart"):
-        _panel_at_a_glance(districts)
+        _panel_at_a_glance(scoped_districts)
     with ui.detail("More detail: method and caveats"):
-        _panel_method(districts, wow_n)
+        _panel_method(scoped_districts, wow_n)
     with ui.detail("My Plan: saved districts and notes"):
         _panel_my_plan()
 
@@ -651,7 +654,7 @@ def _panel_ranking(ranked_all: pd.DataFrame, gap_label: str) -> None:
         "Action": ranked["Action"],
         gap_label: pd.to_numeric(ranked["gap"], errors="coerce"),
         "Need": pd.to_numeric(ranked["health_need_score"], errors="coerce"),
-        "Trust supply %": pd.to_numeric(ranked["trustworthy_supply_rate"], errors="coerce") * 100,
+        "Provider trust %": pd.to_numeric(ranked["trustworthy_supply_rate"], errors="coerce") * 100,
         "Uncertainty": ranked["district_uncertainty_level"].astype(str).str.title(),
         "Decision logic": ranked["Decision logic"],
     })
@@ -665,13 +668,13 @@ def _panel_ranking(ranked_all: pd.DataFrame, gap_label: str) -> None:
             "Rank": st.column_config.NumberColumn(format="%d"),
             gap_label: st.column_config.NumberColumn(
                 f"{gap_label} ▲ worse", format="%.2f",
-                help="Higher = more unmet need with less trustworthy supply."),
+                help="Higher = more unmet need with fewer claims passing checks."),
             "Need": st.column_config.ProgressColumn(
                 "Need ▲ worse", format="%.2f", min_value=0, max_value=1,
                 help="NFHS health-burden score. Higher is worse."),
-            "Trust supply %": st.column_config.ProgressColumn(
-                "Trust supply ▲ better", format="%d%%", min_value=0, max_value=100,
-                help="Share of observed facilities passing trust checks. Higher is better."),
+            "Provider trust %": st.column_config.ProgressColumn(
+                "Provider trust ▲ better", format="%d%%", min_value=0, max_value=100,
+                help="Share of mapped provider claims passing automated checks. Higher is better."),
         },
     )
 
@@ -698,7 +701,7 @@ def _panel_method(districts: pd.DataFrame, wow_n: int) -> None:
             f"**{n_desert} districts have zero mapped facilities** — and they hold "
             f"**{n_top} of the top 50** care gaps. Facility-count maps miss them; "
             "this ranking surfaces them by leading with NFHS health need and the "
-            "absence of trustworthy supply."
+            "absence of provider claims passing checks."
         )
     st.markdown(
         "Care-gap score = **0.55 need · 0.25 supply scarcity · 0.20 low trust**. "

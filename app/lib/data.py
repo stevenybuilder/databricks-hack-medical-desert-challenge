@@ -1369,6 +1369,31 @@ def filter_facilities(df: pd.DataFrame, specialty: str, include_geo_flagged: boo
     return out
 
 
+def filter_facilities_to_districts(facilities: pd.DataFrame, districts: pd.DataFrame) -> pd.DataFrame:
+    """Restrict facility rows to a district subset without dropping non-mappable rows."""
+    if facilities is None:
+        return pd.DataFrame()
+    if districts is None or districts.empty or facilities.empty:
+        return pd.DataFrame(columns=facilities.columns)
+    join_cols = ["district_name", "state_ut"]
+    if not set(join_cols).issubset(facilities.columns) or not set(join_cols).issubset(districts.columns):
+        return facilities.copy()
+    keys = districts[join_cols].dropna().drop_duplicates().copy()
+    if keys.empty:
+        return pd.DataFrame(columns=facilities.columns)
+    f = facilities.copy()
+    f["_district_scope_key"] = f["district_name"].astype(str).str.strip().str.casefold()
+    f["_state_scope_key"] = f["state_ut"].astype(str).str.strip().str.casefold()
+    keys["_district_scope_key"] = keys["district_name"].astype(str).str.strip().str.casefold()
+    keys["_state_scope_key"] = keys["state_ut"].astype(str).str.strip().str.casefold()
+    scoped = f.merge(
+        keys[["_district_scope_key", "_state_scope_key"]].drop_duplicates(),
+        on=["_district_scope_key", "_state_scope_key"],
+        how="inner",
+    )
+    return scoped.drop(columns=["_district_scope_key", "_state_scope_key"], errors="ignore")
+
+
 def quality_snapshot(facilities: pd.DataFrame, districts: pd.DataFrame) -> dict[str, float | int]:
     """Top-line quality metrics for the verification workflow."""
     total = len(facilities)
@@ -1669,7 +1694,10 @@ def verification_queue(
     top_n: int = 75,
 ) -> pd.DataFrame:
     """Build a prioritized facility queue for source enrichment and uncertainty review."""
-    d = filter_facilities(facilities, specialty, include_geo_flagged=True).copy()
+    d = facilities.copy()
+    signal_col = config.SPECIALTIES.get(specialty)
+    if signal_col and signal_col in d.columns:
+        d = d[d[signal_col].fillna(False).astype(bool)].copy()
     if d.empty:
         return pd.DataFrame()
 
@@ -1705,10 +1733,11 @@ def verification_queue(
         d = d.sort_values("review_priority", ascending=False)
 
     cols = [
-        "facility_name", "facilityTypeId", "address_city", "district_name", "state_ut",
+        "unique_id", "facility_name", "facilityTypeId", "address_city", "district_name", "state_ut",
+        "facility_latitude", "facility_longitude",
         "service_signal", "primary_concern", "verification_channel", "label_seed",
         "review_priority", "data_readiness_score", "join_confidence", "geo_quality",
-        "officialPhone", "email", "officialWebsite", "first_source_url", "claim_text",
+        "officialPhone", "email", "officialWebsite", "first_source_url", "claim_text", "source_urls",
     ]
     return d[[c for c in cols if c in d.columns]].head(top_n).reset_index(drop=True)
 

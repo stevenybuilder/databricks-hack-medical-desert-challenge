@@ -1315,15 +1315,14 @@ def _trust_summary(row: pd.Series) -> dict[str, str | float | int]:
     obs_n = 0 if pd.isna(obs) else int(obs)
     passed_n = 0 if pd.isna(passed) else int(passed)
 
-    if obs_n <= 0 or pd.isna(rate):
-        label = "No mapped claims"
-        caption = "Call nearby providers"
+    if obs_n <= 0:
+        label = "Not scored"
+        caption = "No mapped provider claims"
         tone = "warn"
         tooltip = (
-            "Provider trust is not scored because no source-backed provider claims "
-            "are mapped to this district. The deployment signal comes from NFHS-5 "
-            "need indicators, India Post/admin matching, and absence of corroborated "
-            "local supply. Next step: call likely providers before staffing."
+            "Provider trust score: not scored. This district has zero mapped "
+            "provider claims, so there is no local denominator. Use health need, "
+            "gap confidence, and calls to likely providers before staffing."
         )
         return {
             "label": label,
@@ -1334,28 +1333,31 @@ def _trust_summary(row: pd.Series) -> dict[str, str | float | int]:
             "observed": obs_n,
             "passed": passed_n,
         }
+    if pd.isna(rate):
+        rate = passed_n / obs_n
 
     score = max(0.0, min(1.0, float(rate)))
     if score >= 0.67:
-        label = "High trust"
-        caption = "Existing supply claims look usable"
+        label = "High accuracy"
+        caption = "Most observed claims pass"
         tone = "good"
     elif score >= 0.34:
-        label = "Medium trust"
-        caption = "Use, then call or verify claims"
+        label = "Medium accuracy"
+        caption = "Some observed claims pass"
         tone = "warn"
     else:
-        label = "Low trust"
-        caption = "Call or verify before relying on supply"
+        label = "Low accuracy"
+        caption = "Few observed claims pass"
         tone = "bad"
 
     interval = "unknown"
     if not pd.isna(ci_low) and not pd.isna(ci_high):
         interval = f"{ci_low * 100:.0f}% to {ci_high * 100:.0f}%"
     tooltip = (
-        f"Provider trust score: {score:.2f}. Based on source-backed service claims, "
-        "Bayesian record-validity evidence, and Wilson intervals over observed "
-        f"district supply. Passed checks: {passed_n}/{obs_n}; Wilson interval: {interval}."
+        f"Provider trust score: {score * 100:.0f}% proxy accuracy. "
+        f"Mapped provider claims passing checks: {passed_n}/{obs_n}. "
+        f"Wilson interval: {interval}. This is evidence-based claim trust, not "
+        "measured medical truth."
     )
     return {
         "label": label,
@@ -1388,6 +1390,8 @@ def _gap_confidence_summary(row: pd.Series) -> dict[str, str | float]:
     sample = _sample_confidence(row.get("households_surveyed"))
     category = _clean_text(row.get("planning_category"))
     zero_desert = bool(row.get("zero_facility_desert", False))
+    uncertainty = (_clean_text(row.get("district_uncertainty_level")) or "unknown").lower()
+    uncertainty_note = f"uncertainty {uncertainty}" if uncertainty != "unknown" else "uncertainty unknown"
     if zero_desert and category == "real_desert_candidate":
         external = 0.78
         external_note = "zero mapped supply plus admin/NFHS evidence"
@@ -1399,19 +1403,20 @@ def _gap_confidence_summary(row: pd.Series) -> dict[str, str | float]:
     if score >= 0.72:
         label = "High confidence"
         tone = "good"
-        caption = "Strong case to prioritize"
+        caption = f"Strong case; {uncertainty_note}"
     elif score >= 0.55:
         label = "Medium confidence"
         tone = "warn"
-        caption = "Good signal; verify before staffing"
+        caption = f"Good signal; {uncertainty_note}"
     else:
         label = "Low confidence"
         tone = "bad"
-        caption = "Needs more evidence first"
+        caption = f"Needs more evidence; {uncertainty_note}"
     tooltip = (
         f"Gap confidence: {score:.2f}. Combines health need ({need_v:.2f}), "
         f"NFHS sample strength ({sample:.2f}), and {external_note} ({external:.2f}). "
-        "This is separate from provider supply evidence."
+        f"District uncertainty tier: {uncertainty.title()}. This is separate from "
+        "provider trust."
     )
     return {
         "label": label,
@@ -1435,6 +1440,50 @@ def _condition_hint(condition: str) -> str:
     if "insurance" in lower:
         return "Pair clinical deployment with enrollment and low-cost referral support."
     return "Use this as the first clinical problem to validate during deployment planning."
+
+
+def _health_need_summary(row: pd.Series, conds: pd.DataFrame) -> dict[str, str]:
+    need = _num(row.get("health_need_score"))
+    value = "Unknown" if pd.isna(need) else f"{need:.2f}"
+    tone = "bad" if not pd.isna(need) and need >= 0.66 else (
+        "warn" if not pd.isna(need) and need >= 0.33 else "info"
+    )
+    score_text = "Health need score unavailable" if pd.isna(need) else f"Health need score: {need:.2f}"
+    households = _num(row.get("households_surveyed"))
+    sample = _sample_confidence(row.get("households_surveyed"))
+    sample_text = (
+        f"NFHS sample: {int(households):,} households; sample strength {sample:.2f}"
+        if not pd.isna(households)
+        else f"NFHS sample strength: {sample:.2f}"
+    )
+
+    driver_text = "Top condition driver unavailable"
+    if conds is not None and not conds.empty:
+        worst = conds.iloc[0]
+        condition = _clean_text(worst.get("Condition")) or "Medical condition"
+        district_pct = _num(worst.get("District %"))
+        national_pct = _num(worst.get("National %"))
+        gap = _num(worst.get("Δ vs national"))
+        if not pd.isna(district_pct) and not pd.isna(national_pct):
+            driver_text = f"Top driver: {condition} at {district_pct:.1f}% district vs {national_pct:.1f}% national"
+            if not pd.isna(gap):
+                driver_text += f"; {gap:.1f} point gap"
+        elif not pd.isna(district_pct):
+            driver_text = f"Top driver: {condition} at {district_pct:.1f}% district"
+        else:
+            driver_text = f"Top driver: {condition}"
+        driver_text += f". {_condition_hint(condition)}"
+
+    tooltip = (
+        f"{score_text}. NFHS district indicators summarize patient need. "
+        f"{sample_text}. {driver_text}"
+    )
+    return {
+        "value": value,
+        "caption": "Higher means more unmet patient need",
+        "tone": tone,
+        "tooltip": tooltip,
+    }
 
 
 def _condition_summary(conds: pd.DataFrame) -> str:
@@ -1804,31 +1853,56 @@ def _district_trust_assessment(row: pd.Series) -> dict[str, str]:
     obs = _num(row.get("observed_facility_rows"))
     rate = _num(row.get("trustworthy_supply_rate"))
     ci_low = _num(row.get("trustworthy_supply_rate_ci_low"))
-    zero_desert = bool(row.get("zero_facility_desert", False))
 
-    if zero_desert or pd.isna(obs) or obs <= 0 or pd.isna(rate):
-        label = "Low trust"
-        tone = "danger"
-        caption = "No trustworthy facility evidence is on record."
+    if pd.isna(obs) or obs <= 0:
+        label = "Not scored"
+        tone = "info"
+        caption = "No mapped provider claims."
+    elif pd.isna(rate):
+        trusted = _num(row.get("trustworthy_supply_rows"))
+        rate = 0.0 if pd.isna(trusted) else trusted / obs
+        if rate < 0.34:
+            label = "Low accuracy"
+            tone = "danger"
+            caption = "Few observed claims pass."
+        elif rate >= 0.67 and obs >= 3 and (pd.isna(ci_low) or ci_low >= 0.35):
+            label = "High accuracy"
+            tone = "deploy"
+            caption = "Most observed claims pass."
+        else:
+            label = "Medium accuracy"
+            tone = "verify"
+            caption = "Some observed claims pass."
     elif rate < 0.34:
-        label = "Low trust"
+        label = "Low accuracy"
         tone = "danger"
-        caption = "Provider evidence needs verification before planning capacity."
+        caption = "Few observed claims pass."
     elif rate >= 0.67 and obs >= 3 and (pd.isna(ci_low) or ci_low >= 0.35):
-        label = "High trust"
+        label = "High accuracy"
         tone = "deploy"
-        caption = "Supply evidence is comparatively strong for this district."
+        caption = "Most observed claims pass."
     else:
-        label = "Medium trust"
+        label = "Medium accuracy"
         tone = "verify"
-        caption = "Useful signal, but sample size or uncertainty bands are cautious."
+        caption = "Some observed claims pass."
     return {"label": label, "tone": tone, "caption": caption}
 
 
 def _district_trust_tooltip(row: pd.Series) -> str:
-    obs = _fmt_int(row.get("observed_facility_rows"))
-    trusted = _fmt_int(row.get("trustworthy_supply_rows"))
-    rate = _fmt_pct(row.get("trustworthy_supply_rate"))
+    obs_raw = _num(row.get("observed_facility_rows"))
+    rate_raw = _num(row.get("trustworthy_supply_rate"))
+    if pd.isna(obs_raw) or obs_raw <= 0:
+        return (
+            "Provider trust score: not scored. This district has zero mapped "
+            "provider claims, so there is no local denominator. Use health need, "
+            "gap confidence, and calls to likely providers before staffing."
+        )
+    trusted_raw = _num(row.get("trustworthy_supply_rows"))
+    if pd.isna(rate_raw):
+        rate_raw = 0.0 if pd.isna(trusted_raw) else trusted_raw / obs_raw
+    obs = _fmt_int(obs_raw)
+    trusted = _fmt_int(trusted_raw)
+    rate = _fmt_pct(rate_raw)
     ci = _fmt_interval(
         row.get("trustworthy_supply_rate_ci_low"),
         row.get("trustworthy_supply_rate_ci_high"),
@@ -1837,9 +1911,9 @@ def _district_trust_tooltip(row: pd.Series) -> str:
     ci_text = "unknown" if ci == "unknown" else f"{ci} Wilson 95% interval"
     uncertainty = _clean_text(row.get("district_uncertainty_level")).title() or "Unknown"
     return (
-        f"Numeric trust score: {rate}. Passed checks: {trusted} of {obs} observed "
-        f"facility rows. Trust interval: {ci_text}. District uncertainty: {uncertainty}. "
-        "Small samples and wide bands keep the visible tier conservative."
+        f"Provider trust score: {rate} proxy accuracy. Mapped provider claims passing "
+        f"checks: {trusted} of {obs}. Wilson interval: {ci_text}. District uncertainty: "
+        f"{uncertainty}. This is evidence-based claim trust, not measured medical truth."
     )
 
 
@@ -1855,7 +1929,7 @@ def _trust_card(row: pd.Series) -> None:
     st.markdown(
         f"""
         <div class="mdn-card mdn-trust-card {tone_class}">
-          <div class="mdn-card-kicker">Supply trust</div>
+          <div class="mdn-card-kicker">Provider trust</div>
           <div class="mdn-card-value mdn-tip" tabindex="0" data-tip="{tip}">
             {html.escape(assessment["label"])}
           </div>
@@ -1863,10 +1937,9 @@ def _trust_card(row: pd.Series) -> None:
           <div class="mdn-trust-help" tabindex="0">
             How trust is assessed
             <div class="mdn-trust-help-card">
-              Bayesian validity posterior estimates P(valid | evidence) from source,
-              geography, recency, and contradiction signals. District trust then uses
-              Wilson confidence intervals and uncertainty bands so thin samples stay
-              visibly cautious until external verification improves the evidence.
+              Accuracy tiers use mapped provider claims that pass source, geography,
+              recency, and contradiction checks. Wilson intervals and uncertainty bands
+              keep thin samples visibly cautious.
             </div>
           </div>
         </div>
@@ -2072,10 +2145,12 @@ def region_detail(row: pd.Series, specialty: str, districts: pd.DataFrame | None
     )
     decision_banner(chip, rec, banner_tone)
 
-    need = _num(row.get("health_need_score"))
-    need_value = "Unknown" if pd.isna(need) else f"{need:.2f}"
-    need_tone = "bad" if not pd.isna(need) and need >= 0.66 else (
-        "warn" if not pd.isna(need) and need >= 0.33 else "info"
+    conds = data.district_top_conditions(row, districts) if districts is not None else pd.DataFrame()
+    need = _health_need_summary(row, conds)
+    need_tip = html.escape(str(need["tooltip"]), quote=True)
+    need_value = (
+        f'<span tabindex="0" class="mdn-tip mdn-trust-tip" data-tip="{need_tip}">'
+        f'{html.escape(str(need["value"]))} <span aria-hidden="true">ⓘ</span></span>'
     )
     gap_conf = _gap_confidence_summary(row)
     gap_tip = html.escape(str(gap_conf["tooltip"]), quote=True)
@@ -2092,16 +2167,16 @@ def region_detail(row: pd.Series, specialty: str, districts: pd.DataFrame | None
     uncertainty = (_clean_text(row.get("district_uncertainty_level")) or "unknown").title()
     uncertainty_tone = "warn" if uncertainty.lower() in {"higher", "high"} else "info"
     cards = [
-        _region_card("Health need", need_value, "Higher means more unmet patient need", need_tone),
+        _region_card("Health need", str(need["value"]), str(need["caption"]),
+                     str(need["tone"]), value_html=need_value),
         _region_card("Gap confidence", str(gap_conf["label"]), str(gap_conf["caption"]),
                      str(gap_conf["tone"]), value_html=gap_value),
-        _region_card("Supply evidence", str(supply["label"]), str(supply["caption"]),
+        _region_card("Provider trust", str(supply["label"]), str(supply["caption"]),
                      str(supply["tone"]), value_html=supply_value),
     ]
     st.markdown('<div class="mdn-region-grid">' + "".join(cards) + '</div>',
                 unsafe_allow_html=True)
 
-    conds = data.district_top_conditions(row, districts) if districts is not None else pd.DataFrame()
     summary = _condition_summary(conds)
     if summary:
         st.markdown(summary, unsafe_allow_html=True)

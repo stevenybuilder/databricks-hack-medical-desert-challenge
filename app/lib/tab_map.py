@@ -23,6 +23,9 @@ import streamlit as st
 
 from . import config, data, ui, charts
 from .tab_common import (
+    _district_scope_control,
+    _district_scope_filter,
+    _district_scope_value,
     _picked_facility,
     _picked_district,
     _district_row,
@@ -133,6 +136,7 @@ def _focus_on(row, districts: pd.DataFrame, facilities: pd.DataFrame,
     """
     if row is None:
         return
+    st.session_state.pop("map_focus_facility", None)
     st.session_state["map_focus_geo"] = {
         "district_name": row.get("district_name"),
         "state_ut": row.get("state_ut"),
@@ -142,8 +146,37 @@ def _focus_on(row, districts: pd.DataFrame, facilities: pd.DataFrame,
         "latitude": float(lat), "longitude": float(lon), "zoom": float(zoom)}
 
 
+def _focus_on_facility(row: pd.Series, zoom: float = 8.2) -> None:
+    """Focus a verification candidate and open its evidence detail."""
+    if row is None:
+        return
+    payload = row.to_dict()
+    st.session_state["map_focus_facility"] = payload
+    st.session_state.pop("map_focus_geo", None)
+    lat = pd.to_numeric(row.get("facility_latitude"), errors="coerce")
+    lon = pd.to_numeric(row.get("facility_longitude"), errors="coerce")
+    if pd.notna(lat) and pd.notna(lon):
+        st.session_state["map_focus_view"] = {
+            "latitude": float(lat), "longitude": float(lon), "zoom": float(zoom)
+        }
+
+
 def _now_viewing_chip(districts: pd.DataFrame) -> None:
     """Small visible confirmation that a jump/selection is active in the hero."""
+    facility = st.session_state.get("map_focus_facility")
+    if facility:
+        name = html.escape(str(facility.get("facility_name") or "verification candidate"))
+        st.markdown(
+            '<div style="display:inline-flex;align-items:center;gap:.4rem;'
+            'margin:.1rem 0 .55rem;padding:.22rem .6rem;border-radius:var(--radius-pill);'
+            'background:rgba(255,190,72,.13);border:1px solid rgba(255,190,72,.34);'
+            'font-size:.72rem;font-weight:640;color:var(--text)">'
+            '<span style="color:var(--mid)">◎</span>'
+            '<span style="color:var(--mdn-muted);font-weight:600">Now checking</span>'
+            f'<span>{name}</span></div>',
+            unsafe_allow_html=True,
+        )
+        return
     geo = st.session_state.get("map_focus_geo")
     if not geo:
         return
@@ -259,7 +292,69 @@ def _rail_row(row: pd.Series, districts: pd.DataFrame, facilities: pd.DataFrame,
         st.rerun()
 
 
-def _left_rail(districts: pd.DataFrame, facilities: pd.DataFrame) -> None:
+def _verification_row(row: pd.Series, idx: int) -> None:
+    """One compact facility row from the verification-priority queue."""
+    def _clean(value) -> str:
+        text = "" if value is None else str(value).strip()
+        return "" if text.lower() in {"", "nan", "none", "null", "<na>"} else text
+
+    name = _clean(row.get("facility_name")) or "Unnamed facility"
+    district = _clean(row.get("district_name"))
+    state = _clean(row.get("state_ut"))
+    concern = str(row.get("primary_concern", "verify") or "verify").replace("_", " ")
+    channel = str(row.get("verification_channel", "Check source") or "Check source")
+    priority = pd.to_numeric(row.get("review_priority"), errors="coerce")
+    priority_txt = "—" if pd.isna(priority) else f"{float(priority):.1f}"
+    selected = False
+    focused = st.session_state.get("map_focus_facility") or {}
+    uid = str(row.get("unique_id", "") or "")
+    if uid and str(focused.get("unique_id", "") or "") == uid:
+        selected = True
+    elif not uid and str(focused.get("facility_name", "") or "") == name:
+        selected = True
+    sel_ring = ("box-shadow:0 0 0 1px var(--mid) inset;background:rgba(255,190,72,.08);"
+                if selected else "")
+    loc = ", ".join(part for part in [district, state] if part) or "Location needs review"
+    st.markdown(
+        f'<div class="rail-row" style="{sel_ring}">'
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:.55rem">'
+        f'<div style="min-width:0"><div style="font-weight:650;font-size:.8rem;color:var(--text);'
+        f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{html.escape(name)}</div>'
+        f'<div style="font-size:.68rem;color:var(--mdn-muted);overflow:hidden;text-overflow:ellipsis;'
+        f'white-space:nowrap">{html.escape(loc)}</div></div>'
+        f'<span style="font-size:.66rem;font-weight:760;color:var(--mid);'
+        f'font-variant-numeric:tabular-nums">{priority_txt}</span></div>'
+        '<div style="display:flex;align-items:center;gap:.35rem;margin-top:.34rem;flex-wrap:wrap">'
+        f'<span style="font-size:.62rem;font-weight:720;padding:.08rem .42rem;'
+        f'border-radius:var(--radius-pill);background:rgba(255,190,72,.13);'
+        f'border:1px solid rgba(255,190,72,.34);color:var(--mid)">{html.escape(channel)}</span>'
+        f'<span style="font-size:.62rem;color:var(--mdn-muted);overflow:hidden;'
+        f'text-overflow:ellipsis;white-space:nowrap">{html.escape(concern)}</span></div></div>',
+        unsafe_allow_html=True,
+    )
+    if st.button("Open", key=f"verify_pick_{idx}", use_container_width=True):
+        _focus_on_facility(row)
+        st.rerun()
+
+
+def _verification_rail(facilities: pd.DataFrame, specialty: str) -> None:
+    """Compact queue of facilities with the highest verification priority."""
+    queue = data.verification_queue(facilities, specialty, "All", top_n=75)
+    if queue.empty:
+        st.caption("No verification candidates match this service filter.")
+        return
+    st.caption(f"{len(queue):,} facilities · highest verification priority · click **Open**")
+    with st.container(height=360):
+        for i, (_, row) in enumerate(queue.iterrows()):
+            _verification_row(row, i)
+
+
+def _left_rail(
+    districts: pd.DataFrame,
+    facilities: pd.DataFrame,
+    specialty: str,
+    all_districts: pd.DataFrame | None = None,
+) -> None:
     """The frosted LEFT district rail: 2 KPIs + search + scrollable ranked list.
 
     Reuses the care-gap ranking (worst first). The list lives in a height-bounded,
@@ -290,8 +385,26 @@ def _left_rail(districts: pd.DataFrame, facilities: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
     with box:
-        st.markdown('<div class="mdn-panel-h">District rail</div>', unsafe_allow_html=True)
+        mode = st.segmented_control(
+            "Rail mode",
+            ["Districts", "Needs verification"],
+            default="Districts",
+            key="map_rail_mode",
+            label_visibility="collapsed",
+            width="stretch",
+        ) or "Districts"
+        header = "District rail" if mode == "Districts" else "Verification rail"
+        st.markdown(f'<div class="mdn-panel-h">{header}</div>', unsafe_allow_html=True)
         _now_viewing_chip(districts)
+        if mode == "Needs verification":
+            _verification_rail(facilities, specialty)
+            return
+        scope_source = all_districts if all_districts is not None else districts
+        _district_scope_control(
+            scope_source,
+            "map_district_scope_filter",
+            clear_on_change=("map_focus_geo", "map_focus_facility"),
+        )
         _rail_kpis(districts)
         st.markdown('<div style="height:.4rem"></div>', unsafe_allow_html=True)
 
@@ -445,11 +558,11 @@ def _enrich_desert_tips(deserts: pd.DataFrame) -> pd.DataFrame:
                     f'<div style="margin-top:6px;font-size:11px"><span style="color:#97a8c2">'
                     f'Action</span> <b style="color:{col}">{html.escape(lbl)}</b></div>'
                 )
-        # Trust-supply %, when present and non-NaN.
+        # Provider-trust %, when present and non-NaN.
         tsr = pd.to_numeric(r.get("trustworthy_supply_rate"), errors="coerce")
         if pd.notna(tsr):
             parts.append(
-                f'<div style="font-size:11px;color:#97a8c2">Trust supply '
+                f'<div style="font-size:11px;color:#97a8c2">Provider trust '
                 f'<b style="color:#eaf2ff">{tsr * 100:.0f}%</b></div>'
             )
         # Uncertainty tier, when present.
@@ -498,6 +611,10 @@ def _region_detail(row: pd.Series, specialty: str, districts: pd.DataFrame,
 
 
 def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
+    active_scope = _district_scope_value()
+    scoped_districts = _district_scope_filter(districts, active_scope)
+    scoped_facilities_all = data.filter_facilities_to_districts(facilities, scoped_districts)
+
     ui.tab_intro(
         "India care-gap atlas",
         f"{specialty} lens · trust-weighted demand, supply, and uncertainty",
@@ -541,8 +658,8 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
                                          help="Impossible / out-of-India coordinates")
 
     st.session_state["map_dots_on"] = bool(show_points)
-    filtered = data.filter_facilities(facilities, specialty, include_geo_flagged)
-    deserts = data.district_hexes(districts, resolution) if view_mode == "Medical deserts" else None
+    filtered = data.filter_facilities(scoped_facilities_all, specialty, include_geo_flagged)
+    deserts = data.district_hexes(scoped_districts, resolution) if view_mode == "Medical deserts" else None
     cells = data.hexbin(filtered, config.DEFAULT_METRIC, resolution) if view_mode == "Facility coverage" else None
     points = data.facility_points(filtered) if show_points else None
 
@@ -550,11 +667,11 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
     # by joining the extra columns from the source districts table onto the layer.
     if deserts is not None and not deserts.empty:
         extra_cols = [c for c in ("planning_category", "district_uncertainty_level")
-                      if c in districts.columns]
+                      if c in scoped_districts.columns]
         if extra_cols:
             merge_cols = ["district_name", "state_ut", *extra_cols]
             deserts = deserts.merge(
-                districts[merge_cols].drop_duplicates(["district_name", "state_ut"]),
+                scoped_districts[merge_cols].drop_duplicates(["district_name", "state_ut"]),
                 on=["district_name", "state_ut"], how="left")
         deserts = _enrich_desert_tips(deserts)
 
@@ -563,7 +680,7 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
         # Still show the rail so the tab never collapses to a bare info box.
         hcol, mcol = st.columns([1, 2.3])
         with hcol:
-            _left_rail(districts, facilities)
+            _left_rail(scoped_districts, facilities, specialty, districts)
         with mcol:
             st.info("No mappable data for this selection.")
         return
@@ -580,11 +697,11 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
     # ===== COMPOSITION: left district rail · right map (centerpiece) =====
     rail_col, map_col = st.columns([1, 2.3])
     with rail_col:
-        _left_rail(districts, facilities)
+        _left_rail(scoped_districts, facilities, specialty, districts)
     with map_col:
         # Floating legend chip reads as an overlay sitting just above the map canvas.
         n_plotted = 0 if deserts is None else len(deserts)
-        _floating_legend(view_mode, n_plotted, len(filtered), len(facilities))
+        _floating_legend(view_mode, n_plotted, len(filtered), len(scoped_facilities_all))
         event = st.pydeck_chart(deck, height=620, key="map",
                                 on_select="rerun", selection_mode="single-object")
 
@@ -596,29 +713,33 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
     picked_d = _picked_district(event)
     if picked_f:
         st.session_state.pop("map_focus_geo", None)
+        st.session_state.pop("map_focus_facility", None)
         ui.facility_card(picked_f)
     else:
-        row = _district_row(districts, picked_d) if picked_d else None
+        row = _district_row(scoped_districts, picked_d) if picked_d else None
         if row is not None:
             # A map hex click becomes the persistent selection (rail highlight + chip).
+            st.session_state.pop("map_focus_facility", None)
             st.session_state["map_focus_geo"] = {
                 "district_name": row.get("district_name"),
                 "state_ut": row.get("state_ut"),
             }
-        if row is None:
+        if row is None and st.session_state.get("map_focus_facility"):
+            ui.verification_detail(pd.Series(st.session_state["map_focus_facility"]))
+        else:
             focus_geo = st.session_state.get("map_focus_geo")
             if focus_geo:
-                row = _district_row(districts, focus_geo)
-        if row is None:
-            row = _worst_district(districts)
+                row = _district_row(scoped_districts, focus_geo)
+            if row is None:
+                row = _worst_district(scoped_districts)
+                if row is not None:
+                    st.caption("Showing the highest care-gap district. Select a hex or rail row to change it.")
             if row is not None:
-                st.caption("Showing the highest care-gap district. Select a hex or rail row to change it.")
-        if row is not None:
-            _region_detail(row, specialty, districts, facilities)
+                _region_detail(row, specialty, scoped_districts, facilities)
 
     # ---- Depth on demand: coverage snapshot, methodology ----
     with ui.detail("Coverage snapshot & data trust"):
-        _coverage_snapshot(facilities, filtered, districts)
+        _coverage_snapshot(scoped_facilities_all, filtered, scoped_districts)
 
     with ui.detail("How to read this map"):
         st.markdown(

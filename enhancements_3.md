@@ -201,3 +201,40 @@ Intended fixes now being implemented:
 - Real facility photos are not active by default. They require an explicit Google Places enrichment run and a policy-safe serving path with attribution and restricted API keys.
 - A transient Streamlit/Vega console error appeared during rapid Playwright tab switching (`Unrecognized data set`), but the app remained responsive. Re-test after any chart changes.
 - Cloud Run redeploy remains blocked on external project secret hygiene, not app code.
+
+## Data Science + Engineering + UX Follow-Up — District Facility Detail Filter
+
+**Gaps identified**
+- Demo flow needed a clean way to show districts that have mapped provider/facility claims; the existing worst-gap default over-indexed on zero-claim districts, so judges could not easily inspect facility-level evidence.
+- `Supply evidence` and `trustworthy supply` labels were statistically vague. They mixed the district gap signal with provider-claim accuracy, making uncertainty harder to explain.
+- Map and Top Care Gaps needed the same scope state. If each tab filtered independently, a planner could see different district universes while thinking they were following one workflow.
+- A data engineering issue made exact facility joins look nearly empty because facility district names had whitespace/casing mismatches.
+
+**Reasoning**
+- The Devpost brief rewards identifying high-risk medical deserts and confidence that those gaps are real. The right product shape is two demo paths: `No provider claims` for new-supply deserts, and `With provider claims` for facility-level claim verification.
+- The most sound metric language is `Provider trust`: the share of mapped provider claims passing automated source/geography/contradiction checks. This avoids presenting a false ground-truth medical-quality score.
+- The filter belongs inside existing rail/shortlist controls, not in a new top-level toolbar, because it is a demo/navigation mode rather than a separate analytic panel.
+
+**Fixes implemented**
+- Added a global district-scope control with three compact options: `All districts`, `With provider claims`, and `No provider claims`.
+- Wired the scope into both Map and Top Care Gaps so district hexes, rail ranking, shortlist ranking, method counts, and detail panels recompute from the selected scope.
+- Added `data.filter_facilities_to_districts(...)` with normalized district/state join keys so provider-claim districts now map to `9,464` facility rows across `494` districts.
+- Renamed visible trust table/card language to `Provider trust %` and `Provider trust`, with helper text explaining that it means mapped claims passing automated checks.
+- Kept no-provider districts available as a separate clean demo path: `212/706 districts with no mapped provider claims`.
+- Preserved the verification rail at under 100 rows (`75`) for high-priority provider checks without crowding the main views.
+
+**Latest verification**
+- `.venv/bin/python -m py_compile app/app.py app/lib/tab_common.py app/lib/tab_map.py app/lib/tab_gaps.py app/lib/data.py app/lib/ui.py app/lib/copilot.py app/lib/interventions.py app/lib/simulator.py app/lib/photo_enrichment.py`
+- `git diff --check`
+- Data smoke: `706` districts, `494` with provider claims, `212` with no provider claims, `9,464` facility rows in the provider-claim scope, `75` verification-queue rows.
+- Playwright verified:
+  - Map `With provider claims` shows `494/706 districts with mapped provider claims`.
+  - Top Care Gaps inherits the same scope and shows district-mapped provider claim cards.
+  - Top Care Gaps `No provider claims` shows `212/706 districts with no mapped provider claims`.
+  - Map inherits `No provider claims`.
+  - Rendered text scan found no banned public copy: `No real facility photo`, `dataset`, `field check`, `field-check`, or `on the ground`.
+- New screenshots:
+  - `output/playwright/map_with_provider_claims_final.png`
+  - `output/playwright/top_gaps_with_provider_claims_final.png`
+  - `output/playwright/top_gaps_no_provider_claims_final.png`
+  - `output/playwright/map_no_provider_claims_final.png`
