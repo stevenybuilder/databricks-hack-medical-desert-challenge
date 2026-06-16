@@ -694,7 +694,7 @@ def render_trust(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: s
             ["Dimension", "Contribution", "Max", "Reason"]
         ],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
     # Cited sources
