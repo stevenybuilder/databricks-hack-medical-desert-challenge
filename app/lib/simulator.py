@@ -5,10 +5,10 @@ Simulator) and Ambitious Idea 4 of tricky_fields.md (best/most-likely/worst-case
 uncertainty bands for medical-desert planning).
 
 Design rules honored here:
-  * Operate only on signals that exist in the cleaned tables. The dataset has
+  * Operate only on signals that exist in the cleaned tables. They have
     NO broadband, NO real travel-time, and NO elderly-share columns, so the
-    telehealth scenario is explicitly labeled low-confidence ("broadband not in
-    dataset") and any travel framing is derived from existing supply density,
+    telehealth scenario is explicitly labeled low-confidence ("broadband
+    unavailable") and any travel framing is derived from existing supply density,
     never fabricated demographics.
   * Never present a single point estimate without its band. Supply is shown as
     best / most-likely / worst case, derived transparently from observed vs
@@ -236,8 +236,8 @@ def simulate_interventions(
     interventions that add real, trustworthy supply help more where the
     trustworthy-supply rate is low and the health-need score is high. Telehealth
     is penalized and labeled low-confidence because broadband adoption is NOT in
-    the dataset (the doc's demo moment: telehealth-first underperforms mobile/CHW
-    in low-evidence districts).
+    the cleaned tables (the doc's demo moment: telehealth-first underperforms
+    mobile/CHW in low-evidence districts).
 
     Levers
       mobile_clinics        : N mobile clinics to add (scales mobile-clinic effect).
@@ -307,7 +307,7 @@ def simulate_interventions(
 
         note = ""
         if key == "telehealth":
-            note = "Low-confidence: broadband not in dataset; in-person supply scarce."
+            note = "Low-confidence: broadband unavailable; in-person supply scarce."
 
         rows.append(
             {
@@ -529,7 +529,7 @@ def render_simulator(
         if teleh_rank is not None and teleh_rank >= 3:
             msg += (
                 f" Telehealth ranks #{teleh_rank} and is low-confidence here — "
-                "broadband is not in the dataset and in-person supply is scarce, so "
+                "broadband is absent and in-person supply is scarce, so "
                 "mobile/CHW-style interventions are preferred."
             )
         st.info(msg)
@@ -574,10 +574,9 @@ def render_simulator(
                     st.warning("Could not save the scenario; it remains session-only.")
 
         st.caption(
-            "Access improvement is derived from this district's real need and "
-            "trustworthy-supply gap, not a generic ranking. Telehealth is always "
-            "labeled low-confidence: broadband, travel-time, and elderly-share are "
-            "not in this dataset, so any travel/telehealth framing is illustrative."
+            "Access improvement uses this district's need and trustworthy-supply gap. "
+            "Telehealth is low-confidence because broadband, travel-time, and "
+            "elderly-share are absent; travel/telehealth framing is illustrative."
         )
     except Exception as exc:  # pragma: no cover - defensive UI guard
         st.error(f"Could not run the simulation for this district: {exc}")

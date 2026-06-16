@@ -5,7 +5,7 @@ command:
   - run
   - app.py
   - --server.port
-  - "8000"
+  - "${DATABRICKS_APP_PORT:-8000}"
   - --server.address
   - "0.0.0.0"
   - --server.headless

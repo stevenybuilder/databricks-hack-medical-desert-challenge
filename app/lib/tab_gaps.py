@@ -13,6 +13,8 @@ chart/helper needs are LOCAL functions here.
 """
 from __future__ import annotations
 
+import html
+import json
 from contextlib import contextmanager
 
 import pandas as pd
@@ -31,6 +33,75 @@ from .tab_common import (
 
 # How many districts show in the calm default list before "Full ranking".
 _SHORTLIST_N = 6
+
+_CONDITION_HELP = {
+    "Institutional births": (
+        "Access marker",
+        "Lower facility delivery usually means families cannot reliably reach staffed obstetric care.",
+    ),
+    "Skilled birth attendance": (
+        "Maternal safety marker",
+        "Low skilled attendance points to gaps in nurses, midwives, emergency referral, or delivery rooms.",
+    ),
+    "C-section deliveries": (
+        "Surgical access marker",
+        "Very low rates can signal missing emergency obstetric surgery; very high rates can signal overuse.",
+    ),
+    "Women 15-49 anaemic": (
+        "Maternal risk marker",
+        "High anaemia raises pregnancy, surgical, and chronic-care risk; prioritize primary and maternal teams.",
+    ),
+    "Women high BP": (
+        "Chronic-care marker",
+        "High blood pressure burden suggests recurring NCD screening and follow-up clinics.",
+    ),
+    "Men high BP": (
+        "Chronic-care marker",
+        "High blood pressure burden suggests recurring NCD screening and follow-up clinics.",
+    ),
+    "Women high blood sugar": (
+        "Diabetes marker",
+        "High blood sugar burden points to diagnostics, medication continuity, and chronic-care follow-up.",
+    ),
+    "Men high blood sugar": (
+        "Diabetes marker",
+        "High blood sugar burden points to diagnostics, medication continuity, and chronic-care follow-up.",
+    ),
+    "Cervical screening": (
+        "Preventive-care marker",
+        "Low screening suggests outreach camps, women's health staff, and referral pathways.",
+    ),
+    "Breast exam": (
+        "Preventive-care marker",
+        "Low exam coverage suggests outreach camps, women's health staff, and referral pathways.",
+    ),
+    "Oral cancer exam": (
+        "Preventive-care marker",
+        "Low exam coverage suggests outreach camps, dental/oral screening, and referral pathways.",
+    ),
+    "Health insurance coverage": (
+        "Affordability marker",
+        "Low coverage means referral plans should include enrollment support and low-cost public pathways.",
+    ),
+}
+
+_SERVICE_SIGNALS = [
+    ("Maternity / OB-GYN", "has_maternity_care_signal", "Maternity"),
+    ("Emergency / Surgery", "has_emergency_care_signal", "Emergency"),
+    ("Diagnostics / Imaging", "has_diagnostic_signal", "Diagnostics"),
+    ("Chronic disease (NCD)", "has_ncd_care_signal", "NCD"),
+]
+
+_PHOTO_URL_HINTS = (
+    "/photo",
+    "/photos",
+    "view-photo",
+    "gallery",
+    "/media",
+    "/image",
+    "/images",
+    "album",
+)
 
 
 @contextmanager
@@ -92,11 +163,320 @@ def _wow_banner(zero_trust: int, n: int, pct: float) -> None:
         'letter-spacing:-.02em;font-variant-numeric:tabular-nums">'
         f'{zero_trust}/{n}</span>'
         '<span style="color:var(--text);font-size:1.0rem;line-height:1.4;flex:1 1 16rem">'
-        'of the worst care-gap districts have <strong>0% trustworthy supply</strong> — '
-        f'{pct:.0f}% of the highest-need places have <em>no</em> facility that '
-        'passes automated checks.</span></div>',
+        'of the worst care-gap districts have <strong>no verified supply</strong>. '
+        f'Prioritize these for doctor deployment.</span></div>',
         unsafe_allow_html=True,
     )
+
+
+def _guide_steps() -> None:
+    """A visible click path for non-technical planners."""
+    steps = [
+        ("1. Pick a service", "Choose the care team."),
+        ("2. Choose a district", "Start with the ranked shortlist."),
+        ("3. Check claims", "Card checkmark = automated checks passed."),
+        ("4. Save the plan", "Shortlist and add a handoff note."),
+    ]
+    body = "".join(
+        '<div class="mdn-guide-step">'
+        f'<b>{html.escape(title)}</b><span>{html.escape(text)}</span></div>'
+        for title, text in steps
+    )
+    st.markdown(f'<div class="mdn-guide">{body}</div>', unsafe_allow_html=True)
+
+
+def _num(v, default: float = 0.0) -> float:
+    value = pd.to_numeric(v, errors="coerce")
+    return default if pd.isna(value) else float(value)
+
+
+def _pct_text(v) -> str:
+    value = pd.to_numeric(v, errors="coerce")
+    return "unknown" if pd.isna(value) else f"{float(value):.0f}%"
+
+
+def _condition_cards(row: pd.Series, districts: pd.DataFrame) -> None:
+    """Plain-English condition cards; charts are opt-in below."""
+    conds = data.district_top_conditions(row, districts, n=3)
+    if conds.empty:
+        st.caption("No NFHS condition indicators available for this district.")
+        return
+    cards = []
+    for _, cond in conds.iterrows():
+        label = str(cond.get("Condition", "Condition"))
+        marker, meaning = _CONDITION_HELP.get(
+            label,
+            ("Health-need marker", "Use this as a local burden signal when deciding which doctors to deploy."),
+        )
+        district_pct = _pct_text(cond.get("District %"))
+        national_pct = _pct_text(cond.get("National %"))
+        delta = pd.to_numeric(cond.get("Δ vs national"), errors="coerce")
+        gap = "" if pd.isna(delta) else f" · gap {abs(float(delta)):.1f} pts"
+        cards.append(
+            '<div class="mdn-condition-card">'
+            f'<b>{html.escape(label)}</b>'
+            f'<span>{html.escape(marker)}: {district_pct} district vs {national_pct} national{gap}.</span>'
+            f'<span>{html.escape(meaning)}</span>'
+            '</div>'
+        )
+    st.markdown('<div class="mdn-condition-grid">' + "".join(cards) + '</div>',
+                unsafe_allow_html=True)
+
+
+def _source_urls(raw) -> list[str]:
+    """Return useful URLs from a JSON-ish source list."""
+    text = "" if raw is None or (isinstance(raw, float) and pd.isna(raw)) else str(raw).strip()
+    if not text or text.lower() == "nan":
+        return []
+    urls: list[str] = []
+
+    def add_url(value) -> None:
+        url = "" if value is None else str(value).strip().strip('"').strip("'")
+        if url.lower() in {"", "nan", "none", "null"}:
+            return
+        if url.startswith(("http://", "https://")) and url not in urls:
+            urls.append(url)
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            for item in parsed:
+                add_url(item)
+        else:
+            add_url(parsed)
+    except Exception:
+        pass
+    if urls:
+        return urls
+    for piece in text.replace("[", " ").replace("]", " ").replace('"', " ").split(","):
+        add_url(piece)
+    return urls
+
+
+def _first_url(raw) -> str:
+    """Return the first useful URL from a JSON-ish source list."""
+    urls = _source_urls(raw)
+    return urls[0] if urls else ""
+
+
+def _source_domain(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    host = raw.split("://", 1)[-1].split("/", 1)[0].split("?", 1)[0]
+    host = host.split("@", 1)[-1].split(":", 1)[0]
+    return host[4:] if host.lower().startswith("www.") else host
+
+
+def _looks_like_photo_page(url: str) -> bool:
+    raw = (url or "").lower()
+    return any(hint in raw for hint in _PHOTO_URL_HINTS)
+
+
+def _claim_description(raw) -> str:
+    text = "" if raw is None or (isinstance(raw, float) and pd.isna(raw)) else str(raw).strip()
+    if not text or text.lower() == "nan":
+        return ""
+    description = " ".join(text.split(" | ", 1)[0].split())
+    if len(description) > 150:
+        stops = [description.find(stop) for stop in (". ", "; ", " - ") if description.find(stop) >= 60]
+        if stops:
+            description = description[:min(stops) + 1].rstrip()
+    if len(description) > 145:
+        description = description[:142].rstrip(" ,;.") + "..."
+    return description
+
+
+def _verified_claim(row: pd.Series) -> bool:
+    """Automated verification badge: source-backed, not contradicted, no human-review flag."""
+    return bool(row.get("trustworthy_supply_signal", False)) and not bool(
+        row.get("needs_human_review", False)
+    ) and not bool(row.get("contradicted_or_geo_invalid_signal", False))
+
+
+def _service_badges(row: pd.Series, specialty: str, verified: bool) -> str:
+    chips = []
+    for short in _service_claims(row, specialty):
+        tone = "mdn-pill--deploy" if verified else "mdn-pill--verify"
+        chips.append(f'<span class="mdn-pill {tone}">{html.escape(short)} claim</span>')
+    if not chips:
+        chips.append('<span class="mdn-pill mdn-pill--muted">No service claim in this lens</span>')
+    return '<div class="mdn-pill-row">' + "".join(chips[:4]) + '</div>'
+
+
+def _service_claims(row: pd.Series, specialty: str) -> list[str]:
+    relevant = [
+        (label, col, short) for label, col, short in _SERVICE_SIGNALS
+        if specialty == "All specialties" or specialty == label
+    ]
+    return [short for _, col, short in relevant if bool(row.get(col, False))]
+
+
+def _claim_evidence_line(row: pd.Series, specialty: str, domain: str) -> str:
+    claims = _service_claims(row, specialty)
+    claim = ", ".join(claims[:2]) if claims else "facility listing"
+    if len(claims) > 2:
+        claim += " + more"
+    source = domain or ("cited URL" if bool(row.get("has_source_urls", False)) else "claim text")
+    return f"Claim: {claim} · Source: {source}"
+
+
+def _provider_candidates(
+    facilities: pd.DataFrame,
+    selected: pd.Series,
+    specialty: str,
+    n: int = 2,
+) -> tuple[pd.DataFrame, str]:
+    """Return exact district providers, then state-reference providers if district is empty."""
+    if facilities is None or facilities.empty:
+        return pd.DataFrame(), "Provider source unavailable"
+    district = str(selected.get("district_name", "") or "").strip()
+    state = str(selected.get("state_ut", "") or "").strip()
+    exact = facilities[
+        (facilities.get("district_name").astype(str).str.strip() == district)
+        & (facilities.get("state_ut").astype(str).str.strip() == state)
+    ].copy()
+    scope = "District-mapped provider claims"
+    candidates = exact
+    if candidates.empty and state:
+        candidates = facilities[
+            facilities.get("state_ut").astype(str).str.strip().eq(state)
+        ].copy()
+        scope = "State reference examples"
+    if candidates.empty:
+        candidates = facilities.copy()
+        scope = "National reference examples"
+
+    if specialty != "All specialties":
+        signal = next((col for label, col, _ in _SERVICE_SIGNALS if label == specialty), None)
+        if signal and signal in candidates.columns:
+            service_matches = candidates[candidates[signal].fillna(False).astype(bool)]
+            if not service_matches.empty:
+                candidates = service_matches
+
+    candidates["_verified_sort"] = candidates.apply(_verified_claim, axis=1).astype(int)
+    trust = (
+        candidates["trust_tier"].astype(str)
+        if "trust_tier" in candidates
+        else pd.Series("", index=candidates.index)
+    )
+    candidates["_trust_sort"] = trust.map(
+        {"High": 3, "Medium": 2, "Verify": 1}
+    ).fillna(0)
+    source = (
+        candidates["has_source_urls"]
+        if "has_source_urls" in candidates
+        else pd.Series(False, index=candidates.index)
+    )
+    candidates["_source_sort"] = source.fillna(False).astype(bool).astype(int)
+    quality = (
+        candidates["semantic_data_quality_score"]
+        if "semantic_data_quality_score" in candidates
+        else pd.Series(0, index=candidates.index)
+    )
+    candidates["_quality_sort"] = pd.to_numeric(quality, errors="coerce").fillna(0)
+    candidates = candidates.sort_values(
+        ["_verified_sort", "_trust_sort", "_source_sort", "_quality_sort"],
+        ascending=False,
+    ).head(n)
+    return candidates, scope
+
+
+def _provider_cards(facilities: pd.DataFrame, selected: pd.Series, specialty: str) -> None:
+    providers, scope = _provider_candidates(facilities, selected, specialty)
+    ui.panel_header("Provider claims")
+    if providers.empty:
+        st.info("No provider claims available.")
+        return
+    cards = []
+    for _, row in providers.iterrows():
+        name = str(row.get("facility_name") or "Unnamed facility")
+        ftype = str(row.get("facilityTypeId") or "facility").title()
+        city = str(row.get("address_city") or row.get("district_name") or "").strip()
+        state = str(row.get("state_ut") or row.get("address_stateOrRegion") or "").strip()
+        verified = _verified_claim(row)
+        status = "✓ Passed checks" if verified else "Call or verify"
+        status_cls = "mdn-pill--deploy" if verified else "mdn-pill--verify"
+        desc = _claim_description(row.get("claim_text")) or "Claim text pending."
+        urls = _source_urls(row.get("source_urls"))
+        official_url = str(row.get("officialWebsite") or "").strip()
+        if not official_url.startswith(("http://", "https://")):
+            official_url = ""
+        primary_url = (urls[0] if urls else "") or official_url
+        photo_url = next((url for url in urls if _looks_like_photo_page(url)), "")
+        link_url = primary_url or photo_url
+        domain = _source_domain(link_url)
+        link_label = "Source page"
+        source_link = (
+            f' · <a href="{html.escape(link_url, quote=True)}" target="_blank" '
+            f'rel="noopener noreferrer">{html.escape(link_label)}</a>'
+            if link_url else ""
+        )
+        evidence = html.escape(_claim_evidence_line(row, specialty, domain)) + source_link
+        art_hint = "Source page" if link_url else "Source pending"
+        initials = "".join(part[:1] for part in name.split()[:2]).upper() or "P"
+        cards.append(
+            '<div class="mdn-provider-card">'
+            '<div class="mdn-provider-art" style="flex-direction:column;gap:.18rem;text-align:center">'
+            f'<span>{html.escape(initials[:2])}</span>'
+            '<span style="font-size:.62rem;font-weight:650;color:var(--mdn-muted);'
+            f'letter-spacing:0">{html.escape(art_hint)}</span></div>'
+            '<div>'
+            f'<div class="mdn-provider-name">{html.escape(name)}</div>'
+            f'<div class="mdn-pill-row"><span class="mdn-pill {status_cls}">{status}</span>'
+            f'<span class="mdn-pill mdn-pill--muted">{html.escape(ftype)}</span></div>'
+            f'{_service_badges(row, specialty, verified)}'
+            f'<div class="mdn-provider-desc">{html.escape(city)}{", " if city and state else ""}{html.escape(state)}</div>'
+            f'<div class="mdn-provider-claim">{html.escape(desc)}</div>'
+            f'<div class="mdn-provider-desc">{evidence}</div>'
+            '</div></div>'
+        )
+    cards_html = '<div class="mdn-provider-grid">' + "".join(cards) + '</div>'
+    if scope != "District-mapped provider claims":
+        st.info("No source-backed provider claims are mapped to this district yet.")
+        with ui.detail(f"Show {scope.lower()}"):
+            st.caption(
+                f"{scope}. These examples are dynamic, but they are not local evidence "
+                "for the selected district."
+            )
+            st.markdown(cards_html, unsafe_allow_html=True)
+        return
+
+    st.caption("District-mapped claims. Source links open when available. ✓ Passed checks = automated checks passed.")
+    st.markdown(cards_html, unsafe_allow_html=True)
+
+
+def _planner_brief(
+    selected: pd.Series,
+    specialty: str,
+    districts: pd.DataFrame,
+) -> None:
+    """Compact selected-district answer: action, why, and next click."""
+    action = _action_label(selected.get("planning_category"))
+    district = str(selected.get("district_name", "unknown"))
+    state = str(selected.get("state_ut", "unknown"))
+    is_zero = bool(selected.get("zero_facility_desert", False))
+    trust_rate = pd.to_numeric(selected.get("trustworthy_supply_rate"), errors="coerce")
+    supply = "No mapped provider" if is_zero else (
+        "unknown trustworthy supply" if pd.isna(trust_rate) else f"{trust_rate * 100:.0f}% trustworthy supply"
+    )
+    doctors = (
+        "Deploy a mobile team; call or verify local provider gaps."
+        if is_zero else
+        "Call or verify provider claims before deploying."
+    )
+    ui.decision_banner(
+        f"{action}: {district}, {state}",
+        f"{supply} · {specialty} lens · uncertainty {str(selected.get('district_uncertainty_level', 'unknown')).title()}",
+        _action_tone(selected.get("planning_category")),
+    )
+    with _glass_panel():
+        ui.panel_header("Planner next step")
+        st.markdown(
+            f"**Next step:** {doctors}  \n"
+            "Use condition cards for clinician type; provider cards for claim checks."
+        )
+        _condition_cards(selected, districts)
 
 
 def _shortlist_table(ranked: pd.DataFrame, gap_label: str) -> pd.DataFrame:
@@ -111,12 +491,13 @@ def _shortlist_table(ranked: pd.DataFrame, gap_label: str) -> pd.DataFrame:
     })
 
 
-def render(districts: pd.DataFrame, specialty: str) -> None:
+def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
     ranked_all, gap_label = _ranked_districts(districts, specialty)
     ui.tab_intro(
-        "Care-gap leaderboard",
-        f"{specialty} · ranked by need, supply, and evidence — with a next action",
+        "Doctor deployment shortlist",
+        f"{specialty} · highest need first; call or verify claims",
     )
+    _guide_steps()
     if ranked_all.empty:
         st.info("No district rows are available for this specialty lens.")
         return
@@ -163,44 +544,27 @@ def render(districts: pd.DataFrame, specialty: str) -> None:
                     help="Share of observed facilities passing trust checks. Higher is better."),
             },
         )
-        st.caption("Select a row to inspect a district. Full ranking and the desert "
-                   "fingerprints are in the expanders below.")
+        st.caption("Select a row to inspect. More detail below.")
 
     # 4) Selected district → the one rich, but still calm, drill-down panel,
     #    with the inline "add to My Plan" affordances (E8).
     selected = _selected_or_first(ev, shortlist)
     if selected is not None:
-        action = _action_label(selected.get("planning_category"))
-        ui.decision_banner(
-            f"{action}: {selected.get('district_name', 'unknown')}, {selected.get('state_ut', 'unknown')}",
-            f"{gap_label} {_fmt_num(selected.get('gap'))} · trust supply "
-            f"{_fmt_pct(selected.get('trustworthy_supply_rate'))} · uncertainty "
-            f"{str(selected.get('district_uncertainty_level', 'unknown')).title()}",
-            _action_tone(selected.get("planning_category")),
-        )
-        ui.region_detail(selected, specialty, districts)
+        _planner_brief(selected, specialty, districts)
+        _provider_cards(facilities, selected, specialty)
         _plan_affordances(selected, gap_label)
 
-    # ===================== ONE-CLICK DEPTH (sub-nav) ========================
-    # E7: a single segmented control swaps ONE panel in place — no scrolling
-    # through stacked expanders. Default to the most useful sub-view (Ranking).
-    st.markdown('<div style="margin-top:.6rem"></div>', unsafe_allow_html=True)
-    sub = st.segmented_control(
-        "Sub-view",
-        ["Ranking", "At a glance", "Method & caveats", "My Plan"],
-        default="Ranking",
-        label_visibility="collapsed",
-        key="care_gap_subview",
-        width="stretch",
-    ) or "Ranking"
-
-    if sub == "Ranking":
+    # ===================== DEPTH ON DEMAND ==================================
+    # The planner-first default view stops here. Heavier tables, charts, methods,
+    # and saved-work details are still available, but only after intent.
+    st.markdown('<div style="margin-top:.55rem"></div>', unsafe_allow_html=True)
+    with ui.detail("More detail: full ranking table"):
         _panel_ranking(ranked_all, gap_label)
-    elif sub == "At a glance":
+    with ui.detail("More detail: condition chart"):
         _panel_at_a_glance(districts)
-    elif sub == "Method & caveats":
+    with ui.detail("More detail: method and caveats"):
         _panel_method(districts, wow_n)
-    else:
+    with ui.detail("My Plan: saved districts and notes"):
         _panel_my_plan()
 
 
@@ -242,14 +606,14 @@ def _plan_affordances(selected: pd.Series, gap_label: str) -> None:
             with st.form(key=f"gap_note_{key}", clear_on_submit=True):
                 note = st.text_input(
                     "Quick note", key=f"gap_note_in_{key}",
-                    placeholder="e.g. confirm zero-facility status before deploying",
+                    placeholder="e.g. call or verify before deploying",
                     label_visibility="collapsed",
                 )
                 if st.form_submit_button("Save note") and note.strip():
                     status = decisions.save_note(geography_id, note.strip()) or {}
                     st.toast("Note saved.", icon="📝")
                     st.caption(status.get("detail", ""))
-        st.caption("Saved actions survive reload — see them in the My Plan sub-view below.")
+        st.caption("Saved actions survive reload. Open My Plan below.")
 
 
 def _panel_ranking(ranked_all: pd.DataFrame, gap_label: str) -> None:

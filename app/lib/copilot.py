@@ -20,12 +20,27 @@ except Exception:  # pragma: no cover - keeps copilot importable headless
 # Chip set — each maps to a deterministic mode below. Labels are the planner's own
 # questions; the internal mode keys (col 0) must stay stable.
 CHIPS = [
-    ("verifiable_deserts", "🏜️", "Where are the worst gaps — and are they real?"),
-    ("drill_conditions", "🔬", "What conditions are worst in a district?"),
-    ("scenario", "🧪", "What should I deploy here?"),
-    ("whatif", "🎚️", "What if I add clinics?"),
-    ("explain", "📊", "How do you know? (methods & uncertainty)"),
+    ("verifiable_deserts", "1", "Find deployment districts"),
+    ("drill_conditions", "2", "Choose doctor specialty"),
+    ("scenario", "3", "Build deployment plan"),
+    ("whatif", "4", "Test clinic scenario"),
+    ("explain", "?", "Explain evidence"),
 ]
+
+_CONDITION_HELP = {
+    "Institutional births": "Low facility delivery suggests gaps in obstetric access, transport, or staffed delivery rooms.",
+    "Skilled birth attendance": "Low skilled attendance points to nurse, midwife, or referral gaps.",
+    "C-section deliveries": "Low access can signal missing emergency obstetric surgery; extreme high rates need overuse review.",
+    "Women 15-49 anaemic": "High anaemia raises maternal and surgical risk; prioritize maternal/primary-care teams.",
+    "Women high BP": "High blood pressure burden supports recurring NCD screening and follow-up clinics.",
+    "Men high BP": "High blood pressure burden supports recurring NCD screening and follow-up clinics.",
+    "Women high blood sugar": "High blood sugar burden points to diabetes diagnostics and continuity of medicines.",
+    "Men high blood sugar": "High blood sugar burden points to diabetes diagnostics and continuity of medicines.",
+    "Cervical screening": "Low screening suggests women's health outreach and referral pathways.",
+    "Breast exam": "Low exam coverage suggests women's health outreach and referral pathways.",
+    "Oral cancer exam": "Low exam coverage suggests oral/dental screening outreach.",
+    "Health insurance coverage": "Low coverage means referrals may fail unless planners include enrollment support.",
+}
 
 # Copilot styling consumes the SHARED design tokens (defined in ui.inject_css's
 # :root, injected first in app entry) so the Copilot matches the rest of the app
@@ -68,6 +83,44 @@ _CSS = """
 }
 </style>
 """
+
+
+def _guide_steps() -> None:
+    steps = [
+        ("Start", "Pick a guided question."),
+        ("Select", "Choose the district or scenario."),
+        ("Verify", "Review evidence and uncertainty."),
+        ("Save", "Shortlist or save the plan."),
+    ]
+    body = "".join(
+        '<div class="mdn-guide-step">'
+        f'<b>{title}</b><span>{text}</span></div>'
+        for title, text in steps
+    )
+    st.markdown(f'<div class="mdn-guide">{body}</div>', unsafe_allow_html=True)
+
+
+def _condition_summary_cards(conds: pd.DataFrame) -> None:
+    if conds.empty:
+        return
+    cards = []
+    for _, cond in conds.head(3).iterrows():
+        label = str(cond.get("Condition", "Condition"))
+        district_pct = pd.to_numeric(cond.get("District %"), errors="coerce")
+        national_pct = pd.to_numeric(cond.get("National %"), errors="coerce")
+        d_txt = "unknown" if pd.isna(district_pct) else f"{float(district_pct):.0f}%"
+        n_txt = "unknown" if pd.isna(national_pct) else f"{float(national_pct):.0f}%"
+        help_text = _CONDITION_HELP.get(
+            label,
+            "Use this as a local health-burden signal when selecting which doctors to deploy.",
+        )
+        cards.append(
+            '<div class="mdn-condition-card">'
+            f'<b>{label}</b><span>{d_txt} district vs {n_txt} national.</span>'
+            f'<span>{help_text}</span></div>'
+        )
+    st.markdown('<div class="mdn-condition-grid">' + "".join(cards) + '</div>',
+                unsafe_allow_html=True)
 
 
 def _intent(text: str) -> str | None:
@@ -152,17 +205,10 @@ def _mode_verifiable_deserts(facilities, districts, specialty):
     real = districts[districts["planning_category"] == "real_desert_candidate"]
     datapoor = districts[districts["planning_category"].isin(
         ["phantom_desert_or_verification_gap", "supply_record_quality_problem"])]
-    st.markdown(f"**{len(real)} districts read as *verifiable* care deserts** — high need, low "
-                f"trustworthy supply, and enough evidence to believe the gap is real. "
-                f"**{len(datapoor)} more look like gaps but are data-poor** — verify before acting.")
-    st.altair_chart(charts.desert_quadrant(districts), use_container_width=True)
-    # Wordy methodology moved behind a disclosure so the first glance stays calm (E6).
-    with ui.detail("How to read this quadrant"):
-        st.caption("Top-right = high gap **and** well-evidenced (act now). "
-                   "Top-left = high gap but low confidence (verify first). "
-                   "Dashed lines: gap 0.6 / confidence 0.5.")
+    st.markdown(f"**{len(real)} districts are deployment candidates.** "
+                f"**{len(datapoor)} more need claim/data verification first.**")
 
-    top = real.sort_values("care_gap_score", ascending=False).head(8)
+    top = real.sort_values("care_gap_score", ascending=False).head(5)
     # Two HONEST signals instead of one misleading 0.00 "Confidence":
     #   • "Gap is real" — confidence the care gap genuinely exists (need-evidenced).
     #     For zero-facility deserts this is High: the absence of facilities IS the
@@ -174,10 +220,10 @@ def _mode_verifiable_deserts(facilities, districts, specialty):
         "Care gap": pd.to_numeric(top["care_gap_score"], errors="coerce").round(2).values,
         "Gap is real": [_gap_is_real(r) for _, r in top.iterrows()],
         "Supply evidence": [_supply_evidence(r) for _, r in top.iterrows()],
-        "Next step": ["Verify on ground" if bool(r.get("zero_facility_desert", False))
-                      else "Confirm the few records" for _, r in top.iterrows()],
+        "Next step": ["Call or verify" if bool(r.get("zero_facility_desert", False))
+                      else "Confirm records" for _, r in top.iterrows()],
     })
-    st.markdown("**Top verifiable deserts to act on:**")
+    st.markdown("**Start here:**")
     st.dataframe(
         show, hide_index=True, width="stretch",
         column_config={
@@ -196,10 +242,14 @@ def _mode_verifiable_deserts(facilities, districts, specialty):
                      "not a low-confidence score."),
         },
     )
-    st.caption("Two honest signals, not one number: **Gap is real** is need-evidenced "
-               "(NFHS); **Supply evidence** says how much trustworthy facility data exists. "
-               "A zero-facility desert is *High* gap-confidence with *no* supply evidence — "
-               "the absence of facilities is the signal, so verify on the ground.")
+    st.caption("Two checks: **Gap is real** uses NFHS need; **Supply evidence** shows "
+               "trusted facility records. For zero-facility deserts, absence is the "
+               "signal; call or verify before acting.")
+    with ui.detail("Open chart and full evidence view"):
+        st.altair_chart(charts.desert_quadrant(districts), use_container_width=True)
+        st.caption("Top-right = high gap and well-evidenced (act now). "
+                   "Top-left = high gap but low confidence (verify first). "
+                   "Dashed lines: gap 0.6 / confidence 0.5.")
 
 
 def _mode_drill_conditions(facilities, districts, specialty):
@@ -213,11 +263,13 @@ def _mode_drill_conditions(facilities, districts, specialty):
         st.caption("No NFHS condition indicators for this district.")
         return
     st.markdown(f"**{label}** — worst medical-condition gaps vs the national median:")
-    st.altair_chart(charts.condition_gaps(conds), use_container_width=True)
+    _condition_summary_cards(conds)
     worst = conds.iloc[0]
     st.caption(f"Biggest gap: **{worst['Condition']}** ({worst['District %']}% vs "
-               f"{worst['National %']}% national, Δ{worst['Δ vs national']:+.1f} pts). "
-               "Bar = district · gray tick = national.")
+               f"{worst['National %']}% national). Use this to choose which clinical team to deploy.")
+    with ui.detail("Open condition chart"):
+        st.altair_chart(charts.condition_gaps(conds), use_container_width=True)
+        st.caption("Bar = district · gray tick = national median.")
 
 
 def _save_affordance(geography_id: str, label: str, *, assumptions: dict | None = None,
@@ -260,9 +312,7 @@ def _mode_scenario(facilities, districts, specialty):
     # The Copilot's grounded answer to "What should I deploy here?" is the full
     # Interventions recommender, hosted natively inside the conversation.
     st.markdown(
-        "Here's where I'd act first and what I'd deploy — each district ranked by a "
-        "transparent expected-value rule, with confidence kept honest. Pick a district "
-        "to see its recommended intervention and the evidence behind it."
+        "Rank districts by expected value, then inspect the recommended action and evidence."
     )
     interventions.render_interventions(facilities, districts, specialty, embedded=True)
 
@@ -290,9 +340,8 @@ def _mode_whatif(facilities, districts, specialty):
     # The Copilot's grounded answer to "What if I add clinics?" is the full
     # Scenario lab (what-if simulator + supply bands), hosted in the conversation.
     st.markdown(
-        "Let's simulate it. Pick a district and move the levers — I'll project supply "
-        "under best / most-likely / worst-case uncertainty and rank the interventions "
-        "by access gain, keeping low-confidence options honestly flagged."
+        "Pick a district and move the levers. Supply bands and intervention ranks update "
+        "with uncertainty."
     )
     simulator.render_simulator(facilities, districts, specialty, embedded=True)
 
@@ -309,7 +358,7 @@ def _mode_whatif(facilities, districts, specialty):
 
 
 def _mode_explain(facilities, districts, specialty):
-    st.markdown("**How CareGap reasons about trust and uncertainty** — the methods behind every score:")
+    st.markdown("**CareGap methods** — trust and uncertainty behind each score:")
     tiers = (facilities["trust_tier"].value_counts() if "trust_tier" in facilities.columns
              else pd.Series(dtype=int))
     a, b, c = st.columns(3)
@@ -317,18 +366,16 @@ def _mode_explain(facilities, districts, specialty):
     b.metric("Medium", f"{int(tiers.get('Medium', 0)):,}")
     c.metric("Verify-first", f"{int(tiers.get('Verify', 0)):,}")
     items = [
-        ("🧮 Bayesian validity posterior", "P(record valid | evidence) via a transparent log-odds "
-         "update over documented evidence weights (geo, sources, recency, contradictions). "
-         "Drives auto-accept ≥0.85 / review / quarantine."),
-        ("📏 Wilson confidence intervals", "Every district rate (trust, review, supply) carries a "
-         "Wilson interval — wide bands flag fragile evidence on small facility samples."),
-        ("🎯 Split-conformal coverage", "A conformal wrapper calibrated to ~91.8% coverage on a proxy "
-         "label (α=0.1) — honest 'how often are we right' rather than a bare score."),
-        ("🌲 CatBoost supply imputation", "Missing capacity/doctor counts imputed by CatBoost with "
-         "p10–p90 intervals (capacity MAE −13.6% vs cohort-median baseline) — estimates are labeled, "
-         "never passed off as observed."),
-        ("🗺️ Real vs data-poor", "planning_category separates verifiable deserts from data-poor "
-         "regions, so a low number from missing data never masquerades as good coverage."),
+        ("🧮 Bayesian validity posterior", "P(record valid | evidence) from geo, source, recency, "
+         "and contradiction signals. Drives accept / review / quarantine."),
+        ("📏 Wilson confidence intervals", "Trust, review, and supply rates carry intervals; wide "
+         "bands flag small-sample fragility."),
+        ("🎯 Split-conformal coverage", "Calibrated to ~91.8% proxy-label coverage (α=0.1), so "
+         "uncertainty is shown beside each score."),
+        ("🌲 CatBoost supply imputation", "Missing capacity/doctor counts use CatBoost with p10–p90 "
+         "intervals; estimates stay labeled."),
+        ("🗺️ Real vs data-poor", "planning_category separates deploy-ready gaps from weak-evidence "
+         "gaps, so missing supply is not shown as good coverage."),
     ]
     st.markdown('<div class="cp-explain">', unsafe_allow_html=True)
     for title, body in items:
@@ -353,14 +400,15 @@ def render_copilot(facilities: pd.DataFrame, districts: pd.DataFrame, specialty:
     # Standard tab header (design-system contract); the conversational greeting
     # below remains the hero when no mode is active.
     ui.tab_intro("Planner Copilot",
-                 "Grounded answers — every reply cites its data and shows its uncertainty.")
+                 "Guided actions for deciding where to deploy doctors.")
+    _guide_steps()
     mode = st.session_state.get("cp_mode")
 
     if not mode:
-        st.markdown('<div class="cp-greet">Where should we start?</div>',
+        st.markdown('<div class="cp-greet">Choose the next planning move</div>',
                     unsafe_allow_html=True)
-        st.markdown('<div class="cp-hint">Grounded in trust-weighted facility evidence and NFHS '
-                    'health need — pick a question below or ask in your own words.</div>',
+        st.markdown('<div class="cp-hint">Start with deployment districts, choose clinical '
+                    'focus, then save a plan.</div>',
                     unsafe_allow_html=True)
 
     # Chips (always visible so planners can switch modes).
@@ -384,9 +432,13 @@ def render_copilot(facilities: pd.DataFrame, districts: pd.DataFrame, specialty:
                 st.markdown(f"##### {title}")
             _MODES[mode](facilities, districts, specialty)
 
-    st.markdown('<div class="cp-hint" style="margin:.6rem 0 .1rem">Guided assistant — '
-                'grounded in your data, no free-text LLM.</div>', unsafe_allow_html=True)
-    prompt = st.chat_input("Ask about deserts, conditions, trust, or scenarios…")
-    if prompt:
-        st.session_state["cp_mode"] = _intent(prompt) or "_fallback"
-        st.rerun()
+    with ui.detail("Optional: type a planner question"):
+        prompt = st.text_input(
+            "Planner question",
+            placeholder="e.g. What conditions are worst in Uttar Dinajpur?",
+            label_visibility="collapsed",
+            key="cp_free_text",
+        )
+        if st.button("Route question", key="cp_route_question") and prompt:
+            st.session_state["cp_mode"] = _intent(prompt) or "_fallback"
+            st.rerun()

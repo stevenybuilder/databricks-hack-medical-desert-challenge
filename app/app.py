@@ -170,7 +170,7 @@ def main() -> None:
     if primary_view == "Map":
         tab_map.render(facilities, districts, specialty)
     elif primary_view == "Top care gaps":
-        tab_gaps.render(districts, specialty)
+        tab_gaps.render(facilities, districts, specialty)
     else:
         copilot.render_copilot(facilities, districts, specialty)
 

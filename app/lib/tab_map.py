@@ -385,7 +385,7 @@ def _build_layers(deserts, cells, points, show_points) -> list:
 def _map_tooltip() -> dict:
     """E6: a richer hover — a small nested dark card instead of a flat ``{tip}`` line.
 
-    Both layer datasets carry a pre-rendered ``tip`` HTML string (district / facility);
+    Both layer payloads carry a pre-rendered ``tip`` HTML string (district / facility);
     pydeck templates can't do conditional logic, so we keep ``{tip}`` as the body but
     upgrade its CARD styling (rounded, dark, legible, accent rule) and let
     ``data.district_hexes`` / ``data.facility_points`` decide which fields each tip
@@ -484,6 +484,17 @@ def _coverage_snapshot(facilities, filtered, districts) -> None:
         use_container_width=True)
     st.caption("High = passes all checks · Medium = some supply fields estimated (CatBoost) · "
                "Verify = missing supply. Automated checks, not human verification.")
+
+
+def _region_detail(row: pd.Series, specialty: str, districts: pd.DataFrame,
+                   facilities: pd.DataFrame) -> None:
+    """Render district detail with facility cards when the shared UI supports it."""
+    try:
+        ui.region_detail(row, specialty, districts, facilities=facilities)
+    except TypeError as exc:
+        if "unexpected keyword argument 'facilities'" not in str(exc):
+            raise
+        ui.region_detail(row, specialty, districts)
 
 
 def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
@@ -601,9 +612,9 @@ def render(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) ->
         if row is None:
             row = _worst_district(districts)
             if row is not None:
-                st.caption("Showing the highest care-gap district — click any hex or rail row to inspect another.")
+                st.caption("Showing the highest care-gap district. Select a hex or rail row to change it.")
         if row is not None:
-            ui.region_detail(row, specialty, districts)
+            _region_detail(row, specialty, districts, facilities)
 
     # ---- Depth on demand: coverage snapshot, methodology ----
     with ui.detail("Coverage snapshot & data trust"):
