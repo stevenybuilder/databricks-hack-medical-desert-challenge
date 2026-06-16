@@ -28,7 +28,9 @@ from typing import List, Optional
 import pandas as pd
 import streamlit as st
 
-from . import config, ui  # ui has stat_card, decision_banner, workflow_rail
+import json
+
+from . import config, data, ui  # ui has stat_card, decision_banner, workflow_rail
 
 # ---------------------------------------------------------------------------
 # Persistence layer (sqlite3)
@@ -335,6 +337,324 @@ def list_scenario_assumptions(district: Optional[str] = None) -> pd.DataFrame:
     except (sqlite3.Error, OSError):
         _mark_session_only()
         return list_scenario_assumptions(district)
+
+
+# ===========================================================================
+# Unified, UI-callable persistence API
+# ===========================================================================
+#
+# This is the single, documented surface the app.py / ui.py layer should call to
+# persist user actions (notes, shortlists, review decisions, scenarios) and read
+# them back. It unifies two durable backends so persistence survives restarts on
+# the actual deployment target:
+#
+#   * DATA_BACKEND=warehouse (deployed Databricks App): each write is mirrored to
+#     the governed Delta ``caregap_gold`` tables via the write-back functions in
+#     ``data.py`` (``append_reviewer_feedback``/``append_recommendation_override``/
+#     ``append_scenario_decision``). The local filesystem is ephemeral there, so
+#     Delta is the source of truth. We STILL also write to SQLite/session as a
+#     best-effort local cache so the current session reads back immediately.
+#
+#   * local / csv (dev): writes go to SQLite at ``output/data/planner_decisions
+#     .sqlite`` (durable on the dev box). No warehouse needed.
+#
+# Every function here is best-effort and NEVER raises to the UI: a Delta or SQLite
+# failure degrades to ``st.session_state`` and is reflected in the status returned
+# by ``persistence_status()``. Reads MERGE the persisted store (Delta when in
+# warehouse mode, else SQLite) with the in-session store so nothing a user just
+# did disappears mid-session.
+
+
+def _warehouse_mode() -> bool:
+    """True when the deployment target is the SQL warehouse / governed Delta."""
+    try:
+        return data._is_warehouse()
+    except Exception:
+        return False
+
+
+# Set True if a governed Delta write-back was attempted and reported failure, so
+# the UI can honestly say persistence fell back to the local/session store.
+_DELTA_WRITE_FAILED = False
+
+
+def _mark_delta_failed() -> None:
+    global _DELTA_WRITE_FAILED
+    _DELTA_WRITE_FAILED = True
+
+
+def persistence_status() -> dict:
+    """Describe where persistence is currently landing (for a UI status caption).
+
+    Returns a dict with:
+      backend            : "warehouse" | "sqlite" | "session"
+      durable            : bool — survives an app restart on the deployment target
+      delta_write_failed : bool — a governed Delta insert was attempted and failed
+      detail             : human-readable one-liner
+    """
+    if _warehouse_mode():
+        durable = not _DELTA_WRITE_FAILED
+        return {
+            "backend": "warehouse",
+            "durable": durable,
+            "delta_write_failed": _DELTA_WRITE_FAILED,
+            "detail": (
+                "Decisions persist to governed Delta tables in "
+                f"`{data.CAREGAP_CATALOG}.{data.CAREGAP_GOLD_SCHEMA}`."
+                if durable else
+                "Governed Delta write-back failed (table may not exist); decisions "
+                "are session-only until it is created."
+            ),
+        }
+    if _SESSION_ONLY:
+        return {
+            "backend": "session",
+            "durable": False,
+            "delta_write_failed": False,
+            "detail": (
+                "Filesystem is read-only; decisions live in session_state and reset "
+                "on restart."
+            ),
+        }
+    return {
+        "backend": "sqlite",
+        "durable": True,
+        "delta_write_failed": False,
+        "detail": f"Decisions persist locally to `{db_path()}` (SQLite).",
+    }
+
+
+def _reviewer(user: str = "") -> str:
+    return str(user).strip() or _default_reviewer() or "app"
+
+
+# ---- Notes -----------------------------------------------------------------
+
+def save_note(geography_id: str, text: str, user: str = "", *,
+              facility_name: str = "") -> dict:
+    """Persist a free-text note for a geography/facility. Never raises.
+
+    Local: stored as a ``note`` decision in SQLite. Warehouse: also mirrored to
+    ``caregap_gold.reviewer_feedback`` (feedback_type=``note``). Returns
+    ``persistence_status()`` so the caller can surface where it landed.
+    """
+    reviewer = _reviewer(user)
+    # Always record locally (durable on dev; session cache on deployed app).
+    save_decision(unique_id=geography_id, facility_name=facility_name,
+                  decision_type="note", note=text, reviewer=reviewer)
+    if _warehouse_mode():
+        try:
+            if not data.append_reviewer_feedback(
+                geography_id=geography_id, feedback_type="note",
+                notes=text, reviewer=reviewer, status="saved",
+            ):
+                _mark_delta_failed()
+        except Exception:
+            _mark_delta_failed()
+    return persistence_status()
+
+
+def list_notes(geography_id: Optional[str] = None) -> pd.DataFrame:
+    """Return saved notes (newest first), optionally for one geography.
+
+    Columns: geography_id, note, reviewer, created_at. Merges the governed Delta
+    store (warehouse mode) with the local SQLite/session store. Never raises.
+    """
+    cols = ["geography_id", "note", "reviewer", "created_at"]
+    frames: List[pd.DataFrame] = []
+
+    local = list_decisions(geography_id)
+    if not local.empty and "decision_type" in local:
+        notes = local[local["decision_type"].astype(str) == "note"].copy()
+        if not notes.empty:
+            notes = notes.rename(columns={"unique_id": "geography_id"})
+            frames.append(notes.reindex(columns=cols))
+
+    if _warehouse_mode():
+        try:
+            wh = data.load_reviewer_feedback(geography_id)
+            if wh is not None and not wh.empty:
+                if "feedback_type" in wh:
+                    wh = wh[wh["feedback_type"].astype(str) == "note"]
+                if not wh.empty:
+                    wh = wh.rename(columns={"notes": "note"})
+                    frames.append(wh.reindex(columns=cols))
+        except Exception:
+            pass
+
+    if not frames:
+        return pd.DataFrame(columns=cols)
+    out = pd.concat(frames, ignore_index=True)
+    out = out.drop_duplicates(subset=["geography_id", "note", "created_at"])
+    if "created_at" in out:
+        out = out.sort_values("created_at", ascending=False)
+    return out.reset_index(drop=True)
+
+
+# ---- Shortlist -------------------------------------------------------------
+
+def is_shortlisted(geography_id: str) -> bool:
+    """True if the geography is currently on the shortlist. Never raises."""
+    try:
+        sl = list_shortlist()
+        if sl.empty or "unique_id" not in sl:
+            return False
+        return str(geography_id) in set(sl["unique_id"].astype(str))
+    except Exception:
+        return False
+
+
+def toggle_shortlist(geography_id: str, label: str = "", *,
+                     reason: str = "") -> dict:
+    """Add the geography to the shortlist if absent, else remove it. Never raises.
+
+    ``label`` is the human-friendly facility/geography name; ``reason`` is an
+    optional verify-rationale. Warehouse mode mirrors the add/remove to
+    ``caregap_gold.reviewer_feedback`` (feedback_type=``shortlist_add`` /
+    ``shortlist_remove``). Returns ``persistence_status()``.
+    """
+    currently = is_shortlisted(geography_id)
+    if currently:
+        remove_from_shortlist(geography_id)
+        action = "shortlist_remove"
+    else:
+        add_to_shortlist(unique_id=geography_id, facility_name=label, reason=reason)
+        action = "shortlist_add"
+    if _warehouse_mode():
+        try:
+            if not data.append_reviewer_feedback(
+                geography_id=geography_id, feedback_type=action,
+                notes=reason, payload=str(label), reviewer=_reviewer(),
+                status="saved",
+            ):
+                _mark_delta_failed()
+        except Exception:
+            _mark_delta_failed()
+    return persistence_status()
+
+
+# ---- Review decisions ------------------------------------------------------
+
+def save_review_decision(geography_id: str, decision: str, user: str = "", *,
+                         facility_name: str = "", field_name: str = "",
+                         old_value: str = "", new_value: str = "",
+                         note: str = "") -> dict:
+    """Persist a review decision (verify | reject | follow_up | override | note).
+
+    Local: a row in the SQLite ``facility_decisions`` audit trail. Warehouse: also
+    mirrored to ``caregap_gold`` — an override is routed to
+    ``recommendation_overrides``; everything else to ``reviewer_feedback``. Never
+    raises. Returns ``persistence_status()``.
+    """
+    decision = str(decision or "note")
+    reviewer = _reviewer(user)
+    save_decision(unique_id=geography_id, facility_name=facility_name,
+                  decision_type=decision, field_name=field_name,
+                  old_value=old_value, new_value=new_value, note=note,
+                  reviewer=reviewer)
+    if _warehouse_mode():
+        try:
+            if decision == "override":
+                ok = data.append_recommendation_override(
+                    geography_id=geography_id,
+                    original_intervention=str(old_value),
+                    chosen_intervention=str(new_value),
+                    notes=note or field_name, reviewer=reviewer, status="saved",
+                )
+            else:
+                ok = data.append_reviewer_feedback(
+                    geography_id=geography_id, feedback_type=decision,
+                    notes=note, payload=field_name, reviewer=reviewer,
+                    status="saved",
+                )
+            if not ok:
+                _mark_delta_failed()
+        except Exception:
+            _mark_delta_failed()
+    return persistence_status()
+
+
+# ---- Scenarios -------------------------------------------------------------
+
+def save_scenario(geography_id: str, assumptions: dict, user: str = "", *,
+                  note: str = "") -> dict:
+    """Persist a saved what-if scenario (planning assumptions) for a geography.
+
+    ``assumptions`` is a dict of levers / chosen planning values; it is serialized
+    to JSON. Local: one row per key in the SQLite ``scenario_assumptions`` table.
+    Warehouse: the whole dict is mirrored to ``caregap_gold.scenario_decisions``
+    as a JSON payload. Never raises. Returns ``persistence_status()``.
+    """
+    assumptions = assumptions or {}
+    try:
+        payload = json.dumps(assumptions, default=str, sort_keys=True)
+    except Exception:
+        payload = str(assumptions)
+    # Local: keep the per-key shape the existing assumptions table expects.
+    for key, value in assumptions.items():
+        save_scenario_assumption(district=geography_id, key=str(key), value=value)
+    if not assumptions:
+        save_scenario_assumption(district=geography_id, key="scenario", value=payload)
+    if _warehouse_mode():
+        try:
+            if not data.append_scenario_decision(
+                geography_id=geography_id, assumptions=payload,
+                notes=note, reviewer=_reviewer(user), status="saved",
+            ):
+                _mark_delta_failed()
+        except Exception:
+            _mark_delta_failed()
+    return persistence_status()
+
+
+def list_scenarios(geography_id: Optional[str] = None) -> pd.DataFrame:
+    """Return saved scenarios (newest first), optionally for one geography.
+
+    Columns: geography_id, key, value, created_at. Merges the governed Delta store
+    (warehouse mode, where each row's ``assumptions`` JSON is exploded back into
+    key/value pairs) with the local SQLite/session store. Never raises.
+    """
+    cols = ["geography_id", "key", "value", "created_at"]
+    frames: List[pd.DataFrame] = []
+
+    local = list_scenario_assumptions(geography_id)
+    if not local.empty:
+        local = local.rename(columns={"district": "geography_id"})
+        frames.append(local.reindex(columns=cols))
+
+    if _warehouse_mode():
+        try:
+            wh = data.load_scenario_decisions(geography_id)
+            if wh is not None and not wh.empty:
+                exploded = []
+                for _, r in wh.iterrows():
+                    gid = r.get("geography_id", "")
+                    created = r.get("created_at", "")
+                    raw = r.get("assumptions", "")
+                    parsed = None
+                    try:
+                        parsed = json.loads(raw) if isinstance(raw, str) else raw
+                    except Exception:
+                        parsed = None
+                    if isinstance(parsed, dict) and parsed:
+                        for k, v in parsed.items():
+                            exploded.append({"geography_id": gid, "key": str(k),
+                                             "value": v, "created_at": created})
+                    else:
+                        exploded.append({"geography_id": gid, "key": "scenario",
+                                         "value": raw, "created_at": created})
+                if exploded:
+                    frames.append(pd.DataFrame(exploded).reindex(columns=cols))
+        except Exception:
+            pass
+
+    if not frames:
+        return pd.DataFrame(columns=cols)
+    out = pd.concat(frames, ignore_index=True)
+    out = out.drop_duplicates(subset=["geography_id", "key", "value", "created_at"])
+    if "created_at" in out:
+        out = out.sort_values("created_at", ascending=False)
+    return out.reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------

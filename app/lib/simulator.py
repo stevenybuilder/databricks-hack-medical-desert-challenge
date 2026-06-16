@@ -36,6 +36,11 @@ except Exception:  # pragma: no cover - keeps pure functions importable headless
 from . import config, data
 
 try:
+    from . import decisions
+except Exception:  # pragma: no cover - keeps pure functions importable headless
+    decisions = None  # type: ignore
+
+try:
     from . import ui
 except Exception:  # pragma: no cover
     ui = None  # type: ignore
@@ -472,6 +477,36 @@ def render_simulator(facilities: pd.DataFrame, districts: pd.DataFrame, specialt
                 "mobile/CHW-style interventions are preferred."
             )
         st.info(msg)
+
+        # ---- persist this scenario (durable on the deployment target) ----
+        if decisions is not None:
+            geography_id = (
+                f"{str(district_row.get('district_name', '')).strip()}|"
+                f"{str(district_row.get('state_ut', '')).strip()}"
+            )
+            if st.button("Save this scenario", key="sim_save_scenario"):
+                assumptions = {
+                    "district": str(district_row.get("district_name", "")),
+                    "state_ut": str(district_row.get("state_ut", "")),
+                    "specialty": str(specialty),
+                    "mobile_clinics": int(mobile),
+                    "capacity_increase_pct": float(cap_pct),
+                    "telehealth_adoption": float(teleh),
+                    "top_intervention": str(top["Scenario"]),
+                    "top_access_improvement": str(top["Access improvement"]),
+                }
+                try:
+                    status = decisions.save_scenario(
+                        geography_id=geography_id, assumptions=assumptions,
+                        note="What-if scenario saved from the simulator.",
+                    )
+                    st.success(
+                        f"Scenario saved for {labels.iloc[int(chosen)]}. "
+                        f"{status.get('detail', '')}"
+                    )
+                except Exception:
+                    st.warning("Could not save the scenario; it remains session-only.")
+
         st.caption(
             "Access improvement is derived from this district's real need and "
             "trustworthy-supply gap, not a generic ranking. Telehealth is always "

@@ -6,7 +6,7 @@ import html
 import pandas as pd
 import streamlit as st
 
-from . import config, data
+from . import config, data, charts, decisions
 
 _CSS = """
 <style>
@@ -555,7 +555,7 @@ def header() -> None:
     st.markdown(
         f"""
         <div class="mdn-topbar">
-          <div class="mdn-logo">M</div>
+          <div class="mdn-logo">C</div>
           <div>
             <div class="mdn-title">{config.APP_TITLE}</div>
             <div class="mdn-sub">{config.APP_TAGLINE}</div>
@@ -736,8 +736,9 @@ def reason_chips(labels: list[str]) -> None:
     st.markdown(chips, unsafe_allow_html=True)
 
 
-def region_detail(row: pd.Series, specialty: str) -> None:
-    """Full district detail: recommendation, patient conditions, supply, evidence."""
+def region_detail(row: pd.Series, specialty: str, districts: pd.DataFrame | None = None) -> None:
+    """District drill-down for planners/doctors: clean headline + the top medical-condition
+    gaps, with the causal score breakdown and the heavy evidence tucked into expanders."""
     cat = str(row.get("planning_category", "mixed_or_monitor"))
     chip, rec = data.PLANNING.get(cat, data.PLANNING["mixed_or_monitor"])
     district = str(row.get("district_name", "—") or "—").strip()
@@ -763,42 +764,89 @@ def region_detail(row: pd.Series, specialty: str) -> None:
                    f"{0 if pd.isna(obs) else int(obs)} observed facilities passed checks")
     c3.metric("Data uncertainty", str(row.get("district_uncertainty_level", "—")).title())
 
-    st.markdown('<div class="mdn-panel-h">Why this recommendation?</div>',
-                unsafe_allow_html=True)
-    explanation, reasons = data.district_explanation(row, specialty)
-    st.dataframe(explanation, hide_index=True, width="stretch", height=285)
-    if not reasons.empty:
-        reason_chips(reasons["Reason"].tolist())
+    # ---- act → save (persisted): shortlist + planner note ----
+    geo_id = f"{state}|{district}"
+    shortlisted = decisions.is_shortlisted(geo_id)
+    sc1, sc2 = st.columns([1, 1])
+    if sc1.button("★ In plan" if shortlisted else "☆ Add to plan",
+                  key=f"sl_{geo_id}", use_container_width=True):
+        decisions.toggle_shortlist(geo_id, label=name)
+        st.rerun()
+    with sc2.popover("📝 Add note", use_container_width=True):
+        txt = st.text_area("Planner note", key=f"nt_{geo_id}",
+                           label_visibility="collapsed", placeholder="Add a note for this district…")
+        if st.button("Save note", key=f"sn_{geo_id}") and txt.strip():
+            decisions.save_note(geo_id, txt.strip())
+            st.toast("Note saved")
+    _ps = decisions.persistence_status()
+    st.caption(f"Saved actions persist to **{_ps.get('backend', 'session')}**"
+               + ("" if _ps.get("durable") else " · session-only until gold tables are provisioned"))
 
-    # ---- patient-condition profile (what you'll treat) ----
-    _, cond_cols = data.SPECIALTY_DISTRICT.get(specialty, (None, []))
-    rows = [{"Condition": data.COND_LABELS.get(c, c), "Percent": _num(row.get(c))}
-            for c in cond_cols if not pd.isna(_num(row.get(c)))]
-    if rows:
-        st.markdown('<div class="mdn-panel-h">Patient conditions here (NFHS district context)</div>',
-                    unsafe_allow_html=True)
-        prof = pd.DataFrame(rows)
-        st.dataframe(
-            prof, hide_index=True, width="stretch",
-            column_config={"Percent": st.column_config.ProgressColumn(
-                "Percent", format="%.1f%%", min_value=0, max_value=100)})
-        st.caption("Context, not a facility fact. For access measures (births, screening) "
-                   "low = worse; for burden (anaemia, BP, sugar) high = worse.")
+    if bool(row.get("zero_facility_desert", False)):
+        st.warning(
+            "⚠ **Zero mapped facilities.** Invisible to facility-count views — score is driven by NFHS "
+            "health need and the absence of trustworthy supply. Next step: **deploy new access** "
+            "(mobile clinic / CHW outreach), not optimize existing supply."
+        )
 
-    # ---- evidence / citations ----
-    st.markdown('<div class="mdn-panel-h">Evidence (sample facilities & sources)</div>',
+    # ---- HERO: top medical-condition gaps vs national (the planner's "why here") ----
+    st.markdown('<div class="mdn-panel-h">Top medical-condition gaps vs national</div>',
                 unsafe_allow_html=True)
-    names = str(row.get("sample_facility_names", "") or "").strip()
-    claim = str(row.get("sample_claim_evidence", "") or "").strip()
-    url = data._first_url(row.get("sample_source_urls", ""))
-    if names:
-        st.markdown(f"**Facilities:** {names[:300]}")
-    if claim:
-        st.markdown(f"**Claimed (unverified):** {claim[:300]}…")
-    if url:
-        st.markdown(f"**Source:** [{url[:80]}]({url})")
-    if not (names or claim or url):
-        st.caption("No sample evidence recorded for this district.")
+    conds = data.district_top_conditions(row, districts) if districts is not None else pd.DataFrame()
+    if not conds.empty:
+        st.altair_chart(charts.condition_gaps(conds), use_container_width=True)
+        worst = conds.iloc[0]
+        st.caption(f"Worst gap: **{worst['Condition']}** "
+                   f"({worst['District %']}% vs {worst['National %']}% national). "
+                   "Bar = district · gray tick = national median · deeper red = worse. "
+                   "Burden (anaemia/BP/sugar) + access (births/screening) gaps, ranked by severity.")
+    else:
+        st.caption("No NFHS condition indicators available for this district.")
+
+    # ---- causal: how the care-gap score is built ----
+    breakdown, total, _ = data.care_gap_breakdown(row)
+    st.markdown('<div class="mdn-panel-h">How this care-gap score is built</div>',
+                unsafe_allow_html=True)
+    st.altair_chart(charts.care_gap_contributions(breakdown), use_container_width=True)
+    st.caption(f"Care-gap score = Σ contributions = **{total:.2f}** · 0.55 need · 0.25 supply "
+               "scarcity · 0.20 low trust.")
+
+    # ---- cite the underlying facility text behind the score (core requirement #4) ----
+    _fac = str(row.get("sample_facility_names", "") or "").strip()
+    _claim = str(row.get("sample_claim_evidence", "") or "").strip()
+    _url = data._first_url(row.get("sample_source_urls", ""))
+    if _fac or _claim:
+        cite = "**Grounded in facility text:** "
+        if _fac:
+            cite += f"_{_fac.split(';')[0][:55]}_"
+        if _claim:
+            cite += f" — “{_claim[:130]}…”"
+        if _url:
+            cite += f" · [source]({_url})"
+        st.caption(cite)
+    elif bool(row.get("zero_facility_desert", False)):
+        st.caption("**Grounded in:** NFHS-5 district health indicators (no facility records "
+                   "mapped here — that absence *is* the signal).")
+
+    # ---- progressive disclosure: heavy detail only on expand ----
+    with st.expander("Why this recommendation — full signal breakdown"):
+        explanation, reasons = data.district_explanation(row, specialty)
+        st.dataframe(explanation, hide_index=True, width="stretch", height=285)
+        if not reasons.empty:
+            reason_chips(reasons["Reason"].tolist())
+
+    with st.expander("Evidence & sources"):
+        names = str(row.get("sample_facility_names", "") or "").strip()
+        claim = str(row.get("sample_claim_evidence", "") or "").strip()
+        url = data._first_url(row.get("sample_source_urls", ""))
+        if names:
+            st.markdown(f"**Facilities:** {names[:300]}")
+        if claim:
+            st.markdown(f"**Claimed (unverified):** {claim[:300]}…")
+        if url:
+            st.markdown(f"**Source:** [{url[:80]}]({url})")
+        if not (names or claim or url):
+            st.caption("No sample evidence recorded for this district.")
 
 
 def verification_detail(row: pd.Series) -> None:

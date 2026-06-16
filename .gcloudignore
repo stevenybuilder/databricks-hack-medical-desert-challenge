@@ -1,0 +1,42 @@
+# Keep the public image small AND guarantee no secrets/PII enter the build.
+# VCS / envs / caches
+.git
+.venv
+**/__pycache__
+*.py[cod]
+.tmp
+.databricks
+.playwright-cli
+catboost_info
+
+# Not needed by the standalone app
+databricks/
+scripts/
+resources/
+docs/
+output/mlruns/
+output/catboost/
+output/sql/
+output/playwright/
+*.pdf
+*.png
+*.md
+
+# SENSITIVE — API keys / PII / geocoding (mirrors .gitignore). NEVER ship these.
+output/data/google_geocoding_results*.csv
+output/data/google_geocoding_raw*.jsonl
+output/data/google_maps_geocoding_*.csv
+output/data/google_maps_geocoding_*.jsonl
+output/data/geo_coordinate_correction_candidates.csv
+output/data/geo_coordinate_correction_summary.json
+output/data/geo_validation_remaining_severe_candidates.csv
+output/data/geo_validation_remaining_severe_ai_prompts.jsonl
+output/data/claim_validation_queue.csv
+output/data/claim_validation_summary.json
+output/data/entity_resolution_candidate_pairs.csv
+output/data/entity_resolution_clusters.csv
+output/data/entity_resolution_summary.json
+output/data/missing_data_remediation_summary.csv
+output/data/human_verification_seed_queue.csv
+output/data/missing_data_seed_summary.json
+output/data/planner_decisions.sqlite

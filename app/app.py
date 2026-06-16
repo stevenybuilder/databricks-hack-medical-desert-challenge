@@ -15,7 +15,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from lib import config, data, ui
+from lib import config, data, ui, charts, copilot
 from lib import decisions, interventions, simulator, trust
 
 
@@ -116,6 +116,25 @@ def _picked_facility(state):
         return None
 
 
+def _picked_district(state):
+    """Pull the single clicked district-desert hex out of a pydeck selection state."""
+    try:
+        objs = state["selection"]["objects"]
+        d = objs.get("deserts")
+        return d[0] if d else None
+    except (TypeError, KeyError, AttributeError):
+        return None
+
+
+def _district_row(districts: pd.DataFrame, picked) -> pd.Series | None:
+    """Match a clicked desert hex back to its full district row for the causal card."""
+    if picked is None:
+        return None
+    name, state = picked.get("district_name"), picked.get("state_ut")
+    m = districts[(districts["district_name"] == name) & (districts["state_ut"] == state)]
+    return m.iloc[0] if not m.empty else None
+
+
 ACTION_LABELS = {
     "real_desert_candidate": "Deploy",
     "phantom_desert_or_verification_gap": "Verify first",
@@ -201,7 +220,7 @@ def _selected_or_first(event, frame: pd.DataFrame) -> pd.Series | None:
     return frame.iloc[selection[0]] if selection else frame.iloc[0]
 
 
-def map_tab(facilities: pd.DataFrame, specialty: str) -> None:
+def map_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
     st.markdown(
         f"""
         <div class="mdn-earth-strip">
@@ -214,57 +233,62 @@ def map_tab(facilities: pd.DataFrame, specialty: str) -> None:
         """,
         unsafe_allow_html=True,
     )
-    c1, c2, c3, c4, c5 = st.columns([1.5, 1.2, 0.9, 0.9, 1.1])
-    with c1:
-        metric_label = st.selectbox("Layer", list(config.METRICS.keys()),
-                                    index=list(config.METRICS).index(config.DEFAULT_METRIC))
-    with c2:
-        basemap = st.selectbox("Style", list(config.MAP_STYLES.keys()),
-                               index=list(config.MAP_STYLES).index(config.DEFAULT_MAP_STYLE))
-    with c3:
-        resolution = st.slider("Cell size", 3, 6, config.DEFAULT_H3_RESOLUTION)
-    with c4:
-        include_geo_flagged = st.toggle("Flagged geo", value=False,
-                                        help="Include impossible / out-of-India coordinates")
-    with c5:
-        show_points = st.checkbox("Facility dots", value=True,
-                                  help="Individual facility dots with detail and source evidence")
+    # Decluttered control bar: one primary choice + one toggle. Rest tucked away.
+    cc1, cc2, cc3 = st.columns([1.7, 1.0, 3.1])
+    with cc1:
+        view_mode = st.segmented_control(
+            "Map shows", ["Medical deserts", "Facility coverage"],
+            default="Medical deserts", label_visibility="collapsed",
+            key="map_view_mode", width="stretch") or "Medical deserts"
+    with cc2:
+        show_points = st.toggle("Facility dots", value=(view_mode == "Facility coverage"))
+    with cc3:
+        st.caption("Click a **hex** for a district's care-gap breakdown · a **dot** for facility evidence.")
+
+    with st.expander("Map options", expanded=False):
+        oc1, oc2, oc3 = st.columns(3)
+        basemap = oc1.selectbox("Style", list(config.MAP_STYLES.keys()),
+                                index=list(config.MAP_STYLES).index(config.DEFAULT_MAP_STYLE))
+        resolution = oc2.slider("Desert cell size", 3, 6, 4,
+                                help="Lower = bigger hexes (national view); higher = finer detail.")
+        include_geo_flagged = oc3.toggle("Include flagged-geo facilities", value=False,
+                                         help="Impossible / out-of-India coordinates")
 
     filtered = data.filter_facilities(facilities, specialty, include_geo_flagged)
-    cells = data.hexbin(filtered, metric_label, resolution)
+    deserts = data.district_hexes(districts, resolution) if view_mode == "Medical deserts" else None
+    cells = data.hexbin(filtered, config.DEFAULT_METRIC, resolution) if view_mode == "Facility coverage" else None
     points = data.facility_points(filtered) if show_points else None
-    higher_is_worse = config.METRICS[metric_label][2]
 
     map_col, panel_col = st.columns([4.25, 1.08], gap="medium")
 
     with map_col:
-        if cells.empty:
-            st.info("No mappable facilities for this selection.")
-            return
-
-        # recenter on the previously-clicked facility (click-to-fly)
-        prior = _picked_facility(st.session_state.get("map"))
-        if prior:
-            view = pdk.ViewState(latitude=float(prior["lat"]), longitude=float(prior["lon"]),
-                                 zoom=10, pitch=0)
-        else:
-            view = pdk.ViewState(**config.INDIA_VIEW)
-
-        layers = [pdk.Layer(
-            "H3HexagonLayer", id="hexbins", data=cells,
-            get_hexagon="h3", get_fill_color="fill_color",
-            pickable=True, extruded=False, stroked=True, filled=True,
-            opacity=0.55 if show_points else 0.82, coverage=0.92,
-            get_line_color=[255, 255, 255, 60], line_width_min_pixels=0.5,
-        )]
+        view = pdk.ViewState(**config.INDIA_VIEW)
+        layers = []
+        if deserts is not None and not deserts.empty:
+            layers.append(pdk.Layer(
+                "H3HexagonLayer", id="deserts", data=deserts,
+                get_hexagon="h3", get_fill_color="fill_color",
+                pickable=True, extruded=False, stroked=True, filled=True,
+                opacity=0.80, coverage=0.95,
+                get_line_color=[255, 255, 255, 45], line_width_min_pixels=0.4))
+        if cells is not None and not cells.empty:
+            layers.append(pdk.Layer(
+                "H3HexagonLayer", id="hexbins", data=cells,
+                get_hexagon="h3", get_fill_color="fill_color",
+                pickable=True, extruded=False, stroked=True, filled=True,
+                opacity=0.55 if show_points else 0.82, coverage=0.92,
+                get_line_color=[255, 255, 255, 60], line_width_min_pixels=0.5))
         if points is not None and not points.empty:
             layers.append(pdk.Layer(
                 "ScatterplotLayer", id="facilities", data=points,
                 get_position="[lon, lat]", get_fill_color="point_color",
                 get_radius=600, radius_min_pixels=2.5, radius_max_pixels=9,
                 pickable=True, auto_highlight=True, stroked=True,
-                get_line_color=[255, 255, 255, 140], line_width_min_pixels=0.4,
-            ))
+                get_line_color=[255, 255, 255, 140], line_width_min_pixels=0.4))
+
+        if not layers:
+            st.info("No mappable data for this selection.")
+            return
 
         tooltip = {"html": "{tip}",
                    "style": {"backgroundColor": "#07111f", "color": "#eaf2ff",
@@ -273,57 +297,52 @@ def map_tab(facilities: pd.DataFrame, specialty: str) -> None:
                              "padding": "8px"}}
         deck = pdk.Deck(layers=layers, initial_view_state=view,
                         map_style=config.MAP_STYLES[basemap], tooltip=tooltip)
-        event = st.pydeck_chart(deck, height=680, key="map",
+        event = st.pydeck_chart(deck, height=620, key="map",
                                 on_select="rerun", selection_mode="single-object")
-        ui.legend("Lower", "Higher", higher_is_worse)
 
-        lc, rc = st.columns([3, 1])
-        lc.caption(f"{len(cells):,} regions · {len(filtered):,} facilities · "
-                   "scroll to zoom · select a facility for source evidence.")
-        if rc.button("Reset view", width="stretch"):
-            st.session_state.pop("map", None)
-            st.rerun()
+        if view_mode == "Medical deserts":
+            ui.legend("Better coverage", "Medical desert", higher_is_worse=True)
+            n_plotted = 0 if deserts is None else len(deserts)
+            n_des = int(districts.get("zero_facility_desert",
+                        pd.Series(dtype=bool)).fillna(False).sum())
+            st.caption(f"{n_plotted:,} districts shown · green = better coverage, red = wider care gap · "
+                       f"includes {n_des} zero-facility deserts that facility-count maps miss.")
+        else:
+            ui.legend("Lower", "Higher", config.METRICS[config.DEFAULT_METRIC][2])
+            total = len(facilities)
+            st.caption(f"{len(filtered):,} of {total:,} facilities mapped · "
+                       f"{total - len(filtered):,} excluded (missing/flagged coordinates).")
 
-        picked = _picked_facility(event) or prior
-        if picked:
-            ui.facility_card(picked)
+        picked_f = _picked_facility(event)
+        picked_d = _picked_district(event)
+        if picked_f:
+            ui.facility_card(picked_f)
+        else:
+            # Open on an answer: default to the #1 care-gap district until one is clicked.
+            row = _district_row(districts, picked_d) if picked_d else None
+            if row is None and not districts.empty:
+                row = districts.sort_values("care_gap_score", ascending=False).iloc[0]
+                st.caption("Showing the highest care-gap district — click any hex to inspect another.")
+            if row is not None:
+                ui.region_detail(row, specialty, districts)
 
     with panel_col:
-        st.markdown('<div class="mdn-panel-h">Scene inspector</div>', unsafe_allow_html=True)
-        st.metric("Facilities shown", f"{len(filtered):,}")
-        st.metric("Passed readiness checks", f"{int(filtered['trustworthy_supply_signal'].sum()):,}",
-                  help="Automated checks only, not human verification.")
-        review = int(filtered["needs_human_review"].sum())
-        st.metric("Need review", f"{review:,}",
-                  delta=f"{(review/max(len(filtered),1))*100:.0f}% of shown", delta_color="inverse")
-        st.metric("Contradicted / geo-invalid",
-                  f"{int(filtered['contradicted_or_geo_invalid_signal'].sum()):,}")
-        readiness = pd.to_numeric(filtered.get("data_readiness_score", pd.Series(dtype=float)),
-                                  errors="coerce")
-        semantic = pd.to_numeric(filtered.get("semantic_data_quality_score", pd.Series(dtype=float)),
-                                 errors="coerce")
-        posture = pd.DataFrame([
-            {
-                "Signal": "Mean readiness",
-                "Value": "unknown" if pd.isna(readiness.mean()) else f"{readiness.mean():.2f}",
-            },
-            {
-                "Signal": "Mean semantic quality",
-                "Value": "unknown" if pd.isna(semantic.mean()) else f"{semantic.mean():.2f}",
-            },
-            {
-                "Signal": "Review load",
-                "Value": f"{(review / max(len(filtered), 1)):.0%}",
-            },
-        ])
-        st.dataframe(posture, hide_index=True, width="stretch", height=145)
-        if not cells.empty:
-            st.markdown('<div class="mdn-panel-h">Distribution across regions</div>',
-                        unsafe_allow_html=True)
-            counts, edges = np.histogram(cells["value"].dropna(), bins=18)
-            hist = pd.DataFrame({"bin": np.round((edges[:-1] + edges[1:]) / 2, 2),
-                                 "regions": counts}).set_index("bin")
-            st.bar_chart(hist, height=170, color="#66d9ff")
+        st.markdown('<div class="mdn-panel-h">Coverage snapshot</div>', unsafe_allow_html=True)
+        total = len(facilities)
+        st.metric("Facilities mapped", f"{len(filtered):,}",
+                  help=f"of {total:,} total · {total - len(filtered):,} lack valid coordinates")
+        n_des = int(districts.get("zero_facility_desert", pd.Series(dtype=bool)).fillna(False).sum())
+        st.metric("Zero-facility deserts", f"{n_des}", help="Districts with NFHS need but no mapped facility.")
+        # One legible trust distribution instead of three competing metrics.
+        tier = (filtered["trust_tier"].value_counts()
+                if "trust_tier" in filtered.columns else pd.Series(dtype=int))
+        st.markdown('<div class="mdn-panel-h">Facility data trust</div>', unsafe_allow_html=True)
+        st.altair_chart(
+            charts.trust_distribution_bar(int(tier.get("High", 0)), int(tier.get("Medium", 0)),
+                                          int(tier.get("Verify", 0))),
+            use_container_width=True)
+        st.caption("High = passes all checks · Medium = some supply fields estimated (CatBoost) · "
+                   "Verify = missing supply. Automated checks, not human verification.")
 
 
 def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
@@ -332,8 +351,8 @@ def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
         f"""
         <div class="mdn-earth-strip">
           <div>
-            <strong>Mission planner</strong>
-            <span>{specialty} lens · need, supply, evidence quality, and next action</span>
+            <strong>Care-gap leaderboard</strong>
+            <span>{specialty} · ranked by need, supply, and evidence — with a next action</span>
           </div>
         </div>
         """,
@@ -343,16 +362,52 @@ def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
         st.info("No district rows are available for this specialty lens.")
         return
 
+    # Message-in-title (IBCS SAY): lead with the finding, not just the subject.
+    _desert = districts.get("zero_facility_desert")
+    if _desert is not None:
+        n_desert = int(_desert.fillna(False).astype(bool).sum())
+        top50 = districts.nlargest(50, "care_gap_score")
+        n_top = int(top50.get("zero_facility_desert", pd.Series(False, index=top50.index))
+                    .fillna(False).astype(bool).sum())
+        st.markdown(
+            '<div style="margin:.2rem 0 .6rem;padding:.7rem 1rem;border-radius:12px;'
+            'border:1px solid rgba(102,217,255,.30);background:linear-gradient(90deg,'
+            'rgba(102,217,255,.10),rgba(102,217,255,.02));color:#eaf2ff;font-size:1.02rem;'
+            'line-height:1.45">'
+            f'<strong style="color:#9be8ff">{n_desert} districts have zero mapped facilities</strong> '
+            f'— and they hold <strong style="color:#9be8ff">{n_top} of the top 50</strong> care gaps. '
+            'Facility-count maps miss them; this ranking surfaces them.</div>',
+            unsafe_allow_html=True,
+        )
+
     deploy_count = int(districts["planning_category"].eq("real_desert_candidate").sum())
-    verify_count = int(districts["planning_category"].eq("phantom_desert_or_verification_gap").sum())
-    fragile_count = int(districts["planning_category"].isin([
-        "phantom_desert_or_verification_gap",
-        "supply_record_quality_problem",
-    ]).sum())
-    higher_uncertainty = int(districts["district_uncertainty_level"].astype(str).str.lower().eq("higher").sum())
     top = ranked_all.iloc[0]
 
-    c1, c2, c3, c4 = st.columns(4)
+    # ---- WOW headline: trustworthy supply collapses to zero where need is worst ----
+    # Honest, recomputed: among the worst-N care-gap districts, how many have *no*
+    # facility passing automated trust checks (trustworthy_supply_rate == 0).
+    _wow_n = min(50, len(ranked_all))
+    _tsr = pd.to_numeric(
+        ranked_all.head(_wow_n).get("trustworthy_supply_rate"), errors="coerce"
+    ).fillna(0.0)
+    _zero_trust = int((_tsr <= 0).sum())
+    _wow_pct = (_zero_trust / _wow_n * 100) if _wow_n else 0.0
+    st.markdown(
+        '<div style="margin:.2rem 0 .55rem;padding:.85rem 1.1rem;border-radius:12px;'
+        'border:1px solid rgba(255,82,82,.34);background:linear-gradient(90deg,'
+        'rgba(255,82,82,.12),rgba(255,82,82,.02));display:flex;align-items:baseline;'
+        'gap:.7rem;flex-wrap:wrap">'
+        f'<span style="font-size:2.1rem;font-weight:800;color:#ff8d8d;line-height:1;'
+        'font-variant-numeric:tabular-nums">'
+        f'{_zero_trust}/{_wow_n}</span>'
+        '<span style="color:#eaf2ff;font-size:1.0rem;line-height:1.35">of the worst '
+        f'care-gap districts have <strong>0% trustworthy supply</strong> — '
+        f'{_wow_pct:.0f}% of the highest-need places have <em>no</em> facility that '
+        'passes automated checks.</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns(2)
     with c1:
         ui.stat_card(
             "Top district",
@@ -362,18 +417,21 @@ def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
         )
     with c2:
         ui.stat_card("Deploy candidates", f"{deploy_count:,}", "Strong unmet-need signal", "deploy")
-    with c3:
-        ui.stat_card("Verify-first districts", f"{verify_count:,}", "Fragile evidence can reverse the call", "verify")
-    with c4:
-        ui.stat_card("Higher uncertainty", f"{higher_uncertainty:,}", f"{fragile_count:,} fragile action districts", "danger")
 
-    ui.workflow_rail([
-        ("Need", "NFHS patient-condition burden"),
-        ("Supply", "Trustworthy specialty signals"),
-        ("Evidence", "Source text, joins, geo quality"),
-        ("Interval", "Wilson and proxy uncertainty"),
-        ("Action", "Deploy, verify, fix, refer, or monitor"),
-    ])
+    st.caption(
+        "Source: NFHS-5 district health indicators (2019–21) + web-derived FDR facility snapshot · "
+        "706 districts · observed FDR rows are claims, not a verified facility census · "
+        "scores are proxy decision-support, not gold-validated."
+    )
+
+    # ---- Small-multiples: top deserts at a glance (condition-gap fingerprints) ----
+    st.markdown('<div class="mdn-panel-h">Top deserts at a glance</div>', unsafe_allow_html=True)
+    st.altair_chart(
+        charts.small_multiples_deserts(districts, data.district_top_conditions, n=6),
+        use_container_width=True,
+    )
+    st.caption("Each panel = one of the worst care-gap districts · bars = its top medical-condition "
+               "gaps · deeper red = further above the national median.")
 
     filter_choice = st.segmented_control(
         "Action filter",
@@ -396,7 +454,6 @@ def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
         ranked_all["Action"].value_counts()
         .rename_axis("Action")
         .reset_index(name="Districts")
-        .set_index("Action")
     )
     table = pd.DataFrame({
         "Rank": ranked["Rank"],
@@ -413,7 +470,7 @@ def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
     queue_col, detail_col = st.columns([1.18, 1], gap="medium")
     with queue_col:
         st.markdown('<div class="mdn-panel-h">Action queue</div>', unsafe_allow_html=True)
-        st.bar_chart(mix, height=170, color="#66d9ff")
+        st.altair_chart(charts.action_mix(mix), use_container_width=True)
         ev = st.dataframe(
             table,
             hide_index=True,
@@ -423,11 +480,15 @@ def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
             selection_mode="single-row",
             column_config={
                 "Rank": st.column_config.NumberColumn(format="%d"),
-                gap_label: st.column_config.NumberColumn(format="%.2f"),
-                "Need": st.column_config.ProgressColumn("Need", format="%.2f", min_value=0, max_value=1),
+                gap_label: st.column_config.NumberColumn(
+                    f"{gap_label} ▲ worse", format="%.2f",
+                    help="Higher = more unmet need with less trustworthy supply."),
+                "Need": st.column_config.ProgressColumn(
+                    "Need ▲ worse", format="%.2f", min_value=0, max_value=1,
+                    help="NFHS health-burden score. Higher is worse."),
                 "Trust supply %": st.column_config.ProgressColumn(
-                    "Trust supply", format="%d%%", min_value=0, max_value=100
-                ),
+                    "Trust supply ▲ better", format="%d%%", min_value=0, max_value=100,
+                    help="Share of observed facilities passing trust checks. Higher is better."),
             },
         )
 
@@ -442,7 +503,7 @@ def gaps_tab(districts: pd.DataFrame, specialty: str) -> None:
             f"{gap_label} {_fmt_num(selected.get('gap'))} · trust supply {_fmt_pct(selected.get('trustworthy_supply_rate'))} · uncertainty {str(selected.get('district_uncertainty_level', 'unknown')).title()}",
             _action_tone(selected.get("planning_category")),
         )
-        ui.region_detail(selected, specialty)
+        ui.region_detail(selected, specialty, districts)
 
 
 def uncertainty_tab(facilities: pd.DataFrame, districts: pd.DataFrame, specialty: str) -> None:
@@ -976,7 +1037,7 @@ def main() -> None:
 
     lens_col, note_col = st.columns([1.05, 3.2], gap="medium")
     with lens_col:
-        specialty = st.selectbox("Specialty lens", list(config.SPECIALTIES.keys()), index=0)
+        specialty = st.selectbox("Filter by service (optional)", list(config.SPECIALTIES.keys()), index=0)
     with note_col:
         st.markdown(
             '<div class="mdn-orbit-note">NFHS health need, facility supply, source evidence, '
@@ -987,22 +1048,18 @@ def main() -> None:
     st.markdown(
         """
         <div class="mdn-nav-groups">
-          <span class="mdn-nav-grp mdn-nav-explore">Explore</span>
-          <span class="mdn-nav-sep">Map · Top care gaps</span>
+          <span class="mdn-nav-grp mdn-nav-explore">Plan</span>
+          <span class="mdn-nav-sep">Map · Top care gaps · Copilot</span>
           <span class="mdn-nav-sep">|</span>
-          <span class="mdn-nav-grp mdn-nav-act">Act</span>
-          <span class="mdn-nav-sep">Interventions · Scenario lab</span>
-          <span class="mdn-nav-sep">|</span>
-          <span class="mdn-nav-grp mdn-nav-verify">Verify</span>
-          <span class="mdn-nav-sep">Uncertainty · Trust · Decisions</span>
+          <span class="mdn-nav-grp mdn-nav-verify">Evidence &amp; methods</span>
+          <span class="mdn-nav-sep">Interventions · Scenario · Uncertainty · Trust · Decisions</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
     primary_view = st.segmented_control(
         "Primary view",
-        ["Map", "Top care gaps", "Interventions", "Scenario lab",
-         "Uncertainty console", "Trust & conformal", "Decisions & feedback"],
+        ["Map", "Top care gaps", "Copilot", "Advanced"],
         default="Map",
         label_visibility="collapsed",
         key="primary_view",
@@ -1010,19 +1067,35 @@ def main() -> None:
     )
     primary_view = primary_view or "Map"
     if primary_view == "Map":
-        map_tab(facilities, specialty)
+        map_tab(facilities, districts, specialty)
     elif primary_view == "Top care gaps":
         gaps_tab(districts, specialty)
-    elif primary_view == "Interventions":
-        interventions.render_interventions(facilities, districts, specialty)
-    elif primary_view == "Scenario lab":
-        simulator.render_simulator(facilities, districts, specialty)
-    elif primary_view == "Uncertainty console":
-        uncertainty_tab(facilities, districts, specialty)
-    elif primary_view == "Trust & conformal":
-        trust.render_trust(facilities, districts, specialty)
+    elif primary_view == "Copilot":
+        copilot.render_copilot(facilities, districts, specialty)
     else:
-        decisions.render_decisions(facilities, districts, specialty)
+        # Advanced — supporting tools, de-emphasized so the demo path stays obvious.
+        # Nothing removed; these remain one click away under a secondary selector.
+        st.caption("Supporting analysis tools — the core demo lives in Map and Top care gaps.")
+        advanced_view = st.segmented_control(
+            "Advanced view",
+            ["Interventions", "Scenario lab", "Uncertainty console",
+             "Trust & conformal", "Decisions & feedback"],
+            default="Interventions",
+            label_visibility="collapsed",
+            key="advanced_view",
+            width="stretch",
+        )
+        advanced_view = advanced_view or "Interventions"
+        if advanced_view == "Interventions":
+            interventions.render_interventions(facilities, districts, specialty)
+        elif advanced_view == "Scenario lab":
+            simulator.render_simulator(facilities, districts, specialty)
+        elif advanced_view == "Uncertainty console":
+            uncertainty_tab(facilities, districts, specialty)
+        elif advanced_view == "Trust & conformal":
+            trust.render_trust(facilities, districts, specialty)
+        else:
+            decisions.render_decisions(facilities, districts, specialty)
 
 
 if __name__ == "__main__":

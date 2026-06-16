@@ -9,8 +9,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_TITLE = "Medical Desert Navigator"
-APP_TAGLINE = "Trust-weighted care gaps across India"
+APP_TITLE = "CareGap"
+APP_TAGLINE = "Evidence-checked medical-desert planning across India"
 
 # --- Data location -----------------------------------------------------------
 # Default to the project's pre-cleaned output; override with DATA_DIR env var.

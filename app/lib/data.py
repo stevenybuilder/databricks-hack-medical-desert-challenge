@@ -36,6 +36,7 @@ def _is_warehouse() -> bool:
 # Columns we actually need for Phase 1 (keep the 49MB read fast).
 _USECOLS = [
     "unique_id",
+    "trust_tier",
     "source_unique_id_occurrences",
     "source_duplicate_unique_id",
     "facility_name",
@@ -444,6 +445,74 @@ def append_recommendation_override(
         pd.Timestamp.utcnow().isoformat(),
     ]
     return _warehouse_insert("recommendation_overrides", columns, values)
+
+
+def append_scenario_decision(
+    geography_id: str,
+    assumptions: str,
+    notes: str = "",
+    reviewer: str | None = None,
+    status: str = "saved",
+    policy_version: str | None = None,
+) -> bool:
+    """Append a saved what-if scenario to caregap_gold.scenario_decisions.
+
+    Warehouse mode: parameterized INSERT (returns True on success). Otherwise no-op
+    returning False. `assumptions` is a serialized payload (e.g. JSON) describing the
+    scenario levers/planning values the planner chose for this geography.
+    """
+    columns = [
+        "geography_id", "assumptions", "notes",
+        "reviewer", "status", "policy_version", "created_at",
+    ]
+    values = [
+        str(geography_id), str(assumptions), str(notes),
+        reviewer or os.environ.get("CAREGAP_REVIEWER", "app"),
+        str(status), policy_version or DEFAULT_POLICY_VERSION,
+        pd.Timestamp.utcnow().isoformat(),
+    ]
+    return _warehouse_insert("scenario_decisions", columns, values)
+
+
+def load_reviewer_feedback(geography_id: str | None = None) -> pd.DataFrame:
+    """Read persisted reviewer feedback from caregap_gold.reviewer_feedback.
+
+    Warehouse-only governed read. Returns an empty DataFrame on any error, on a
+    missing table, or when not in warehouse mode (local persistence lives in
+    SQLite). Never raises.
+    """
+    if not _is_warehouse():
+        return pd.DataFrame()
+    try:
+        where = ""
+        if geography_id is not None:
+            safe = str(geography_id).replace("'", "''")
+            where = f" WHERE geography_id = '{safe}'"
+        return _warehouse_query(
+            f"SELECT * FROM {_gold('reviewer_feedback')}{where} ORDER BY created_at DESC"
+        )
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_scenario_decisions(geography_id: str | None = None) -> pd.DataFrame:
+    """Read persisted scenarios from caregap_gold.scenario_decisions.
+
+    Warehouse-only governed read. Returns an empty DataFrame on any error, on a
+    missing table, or when not in warehouse mode. Never raises.
+    """
+    if not _is_warehouse():
+        return pd.DataFrame()
+    try:
+        where = ""
+        if geography_id is not None:
+            safe = str(geography_id).replace("'", "''")
+            where = f" WHERE geography_id = '{safe}'"
+        return _warehouse_query(
+            f"SELECT * FROM {_gold('scenario_decisions')}{where} ORDER BY created_at DESC"
+        )
+    except Exception:
+        return pd.DataFrame()
 
 
 # --- Districts (Phase 2: leaderboard + region detail) ------------------------
@@ -1084,6 +1153,101 @@ def district_explanation(row: pd.Series, specialty: str) -> tuple[pd.DataFrame, 
     return pd.DataFrame(drivers), reasons
 
 
+def care_gap_breakdown(row: pd.Series) -> tuple[pd.DataFrame, float, bool]:
+    """Decompose the care-gap score into its additive contributions.
+
+    Mirrors the exact builder formula so the demo can SHOW the math behind the score:
+        care_gap = 0.55*health_need + 0.25*(1 - facility_percentile) + 0.20*(1 - trust_rate)
+    Returns (breakdown_df, total, is_zero_facility_desert).
+    """
+    def _f(v: Any) -> float:
+        n = pd.to_numeric(v, errors="coerce")
+        return 0.0 if pd.isna(n) else float(n)
+
+    hn = _f(row.get("health_need_score"))
+    pct = _f(row.get("observed_facility_count_percentile"))
+    tsr = _f(row.get("trustworthy_supply_rate"))
+    comps = [
+        ("Health need (NFHS burden)", 0.55, hn),
+        ("Supply scarcity (few/no facilities)", 0.25, 1 - pct),
+        ("Low trustworthy supply", 0.20, 1 - tsr),
+    ]
+    breakdown = pd.DataFrame([
+        {"Component": name, "Weight × factor": f"{w:.2f} × {factor:.2f}",
+         "Contribution": round(w * factor, 3)}
+        for name, w, factor in comps
+    ])
+    total = min(sum(w * factor for _, w, factor in comps), 1.0)
+    is_desert = bool(row.get("zero_facility_desert", False))
+    return breakdown, total, is_desert
+
+
+# Condition direction: higher value = worse burden, vs lower value = worse access gap.
+_COND_HIGH_BAD = {
+    "all_w15_49_who_are_anaemic_pct",
+    "w15_plus_with_high_bp_sys_gte_140_mmhg_and_or_dia_gte_90_mm_pct",
+    "m15_plus_with_high_bp_sys_gte_140_mmhg_and_or_dia_gte_90_mm_pct",
+    "w15_plus_with_high_or_very_high_gt_140_mg_dl_blood_sugar_or_pct",
+    "m15_plus_with_high_or_very_high_gt_140_mg_dl_blood_sugar_or_pct",
+}
+# Everything else in COND_LABELS is an access/screening metric where LOWER = worse.
+
+
+def _national_condition_medians(districts: pd.DataFrame) -> dict:
+    out = {}
+    if districts is None:
+        return out
+    for col in COND_LABELS:
+        if col in districts.columns:
+            med = pd.to_numeric(districts[col], errors="coerce").median()
+            if pd.notna(med):
+                out[col] = float(med)
+    return out
+
+
+def district_top_conditions(row: pd.Series, districts: pd.DataFrame, n: int = 6) -> pd.DataFrame:
+    """The district's worst medical-condition gaps vs the national median.
+
+    Tableau-style drill-down (think "Top 5 Cities" nested view): each condition gets
+    its district value, the national median, and a signed Δ where **positive = worse
+    than national**. Sorted by severity; only conditions worse than national surface.
+    """
+    nat = _national_condition_medians(districts)
+    rows = []
+    for col, label in COND_LABELS.items():
+        if col not in row.index:
+            continue
+        val = pd.to_numeric(row.get(col), errors="coerce")
+        if pd.isna(val):
+            continue
+        national = nat.get(col, float("nan"))
+        high_bad = col in _COND_HIGH_BAD
+        # Severity: how much WORSE than national, in percentage points.
+        if pd.isna(national):
+            severity = 0.0
+            delta = float("nan")
+        elif high_bad:
+            delta = val - national          # higher burden than national = worse
+            severity = delta
+        else:
+            delta = national - val          # lower access than national = worse (report as +)
+            severity = delta
+        rows.append({
+            "Condition": label,
+            "District %": round(float(val), 1),
+            "National %": None if pd.isna(national) else round(float(national), 1),
+            "Δ vs national": None if pd.isna(delta) else round(float(delta), 1),
+            "kind": "burden" if high_bad else "access",
+            "_sev": severity,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # Surface the worst gaps first (most worse-than-national).
+    df = df.sort_values("_sev", ascending=False).head(n).drop(columns=["_sev"]).reset_index(drop=True)
+    return df
+
+
 def facility_explanation(row: pd.Series) -> pd.DataFrame:
     sources = ", ".join(_json_list(row.get("external_evidence_sources_to_check"))) or "Source URLs / registry search"
     return pd.DataFrame(
@@ -1693,3 +1857,45 @@ def hexbin(df: pd.DataFrame, metric_label: str, resolution: int) -> pd.DataFrame
                     + metric_label + ": " + cells["value_str"]
                     + "<br/>Passed checks: " + cells["trust_str"])
     return cells
+
+
+def district_hexes(districts: pd.DataFrame, resolution: int = 5) -> pd.DataFrame:
+    """One care-gap hex per district centroid (incl. zero-facility deserts).
+
+    Mirrors VF Match's "medical deserts" layer: green (low gap / good coverage) →
+    red (high gap / desert). This is how the 212 zero-facility deserts finally
+    appear on the map. Colored by care_gap_score, normalized across districts.
+    """
+    cols = ["h3", "fill_color", "district_name", "state_ut", "care_gap_score",
+            "health_need_score", "trustworthy_supply_rate", "observed_facility_rows",
+            "zero_facility_desert", "lat", "lon", "tip"]
+    if districts is None or districts.empty:
+        return pd.DataFrame(columns=cols)
+    d = districts.dropna(subset=["district_latitude", "district_longitude"]).copy()
+    if d.empty:
+        return pd.DataFrame(columns=cols)
+
+    gap = pd.to_numeric(d["care_gap_score"], errors="coerce")
+    vmin, vmax = float(gap.min()), float(gap.max())
+    span = (vmax - vmin) or 1.0
+    d["h3"] = [h3.latlng_to_cell(la, lo, resolution)
+               for la, lo in zip(d["district_latitude"], d["district_longitude"])]
+    # If two district centroids collide in one cell, keep the worse (higher) gap.
+    d = d.sort_values("care_gap_score", ascending=False).drop_duplicates("h3")
+
+    desert = d.get("zero_facility_desert", pd.Series(False, index=d.index)).fillna(False).astype(bool)
+    d["fill_color"] = [
+        _ramp((float(g) - vmin) / span, higher_is_worse=True) + [220]
+        if pd.notna(g) else list(_COLOR_UNKNOWN)
+        for g in gap.loc[d.index]
+    ]
+    obs = pd.to_numeric(d["observed_facility_rows"], errors="coerce").fillna(0).astype(int)
+    tsr = pd.to_numeric(d["trustworthy_supply_rate"], errors="coerce")
+    tag = np.where(desert, "🏜️ Zero mapped facilities", obs.astype(str) + " facilities")
+    d["tip"] = ("<b>" + d["district_name"].fillna("—") + ", " + d["state_ut"].fillna("—") + "</b><br/>"
+                + "Care gap: " + gap.loc[d.index].round(2).astype(str)
+                + " · Need: " + pd.to_numeric(d["health_need_score"], errors="coerce").round(2).astype(str)
+                + "<br/>" + tag)
+    out = d.rename(columns={"district_latitude": "lat", "district_longitude": "lon"})
+    out["zero_facility_desert"] = desert.values
+    return out[cols]

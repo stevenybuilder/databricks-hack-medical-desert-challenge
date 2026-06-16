@@ -72,6 +72,12 @@ resources:
           notebook_task:
             notebook_path: ../databricks/notebooks/06_app_backend_queries.py
 
+        - task_key: create_persistence_tables
+          depends_on:
+            - task_key: generate_gold_outputs
+          notebook_task:
+            notebook_path: ../databricks/notebooks/08_create_persistence_tables.py
+
       # Manual / triggered for the hackathon. Optional weekly refresh kept disabled.
       schedule:
         quartz_cron_expression: "0 0 6 ? * MON"
