@@ -1,0 +1,79 @@
+# CareGap medallion job — Free Edition serverless.
+# IMPORTANT: serverless only. No new_cluster / job_clusters / node_type_id.
+# Serverless notebook tasks run on serverless compute automatically.
+# pip dependencies are attached via a job-level `environments:` block referenced
+# by tasks through `environment_key` (serverless job environment spec).
+resources:
+  jobs:
+    caregap_medallion:
+      name: caregap_medallion
+
+      # Serverless job environments. Tasks reference these via environment_key.
+      # `spec.client` pins the serverless environment (Spark Connect) version;
+      # `spec.dependencies` are pip requirements installed into the environment.
+      environments:
+        - environment_key: feature_eng_env
+          spec:
+            client: "2"
+            dependencies:
+              - databricks-feature-engineering
+        - environment_key: scoring_env
+          spec:
+            client: "2"
+            dependencies:
+              - mapie
+        - environment_key: catboost_env
+          spec:
+            client: "2"
+            dependencies:
+              - catboost==1.2.10
+
+      tasks:
+        - task_key: ingest_bronze
+          notebook_task:
+            notebook_path: ../databricks/notebooks/01_ingest_bronze.py
+
+        - task_key: clean_silver
+          depends_on:
+            - task_key: ingest_bronze
+          notebook_task:
+            notebook_path: ../databricks/notebooks/02_clean_silver.py
+
+        - task_key: build_features
+          depends_on:
+            - task_key: clean_silver
+          environment_key: feature_eng_env
+          notebook_task:
+            notebook_path: ../databricks/notebooks/03_build_features.py
+
+        - task_key: track_scoring_policies
+          depends_on:
+            - task_key: build_features
+          environment_key: scoring_env
+          notebook_task:
+            notebook_path: ../databricks/notebooks/04_track_scoring_policies.py
+
+        - task_key: train_catboost_imputers
+          depends_on:
+            - task_key: ingest_bronze
+          environment_key: catboost_env
+          notebook_task:
+            notebook_path: ../databricks/notebooks/07_train_catboost_imputers.py
+
+        - task_key: generate_gold_outputs
+          depends_on:
+            - task_key: track_scoring_policies
+          notebook_task:
+            notebook_path: ../databricks/notebooks/05_generate_gold_outputs.py
+
+        - task_key: app_backend_queries
+          depends_on:
+            - task_key: generate_gold_outputs
+          notebook_task:
+            notebook_path: ../databricks/notebooks/06_app_backend_queries.py
+
+      # Manual / triggered for the hackathon. Optional weekly refresh kept disabled.
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: UTC
+        pause_status: PAUSED

@@ -5,7 +5,7 @@ command:
   - run
   - app.py
   - --server.port
-  - "${DATABRICKS_APP_PORT:-8000}"
+  - "8000"
   - --server.address
   - "0.0.0.0"
   - --server.headless
@@ -15,3 +15,31 @@ env:
     value: "false"
   - name: STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION
     value: "false"
+
+  # --- Data backend ---------------------------------------------------------
+  # Default `csv` keeps local dev reading output/data/*.csv (no warehouse needed).
+  # Flip to `warehouse` on deploy to read the governed gold tables/views and enable
+  # feedback write-back. Loaders fall back to local CSV on any warehouse failure.
+  - name: DATA_BACKEND
+    value: "warehouse"
+
+  # --- SQL warehouse (used only when DATA_BACKEND=warehouse) -----------------
+  # Free-Edition serverless SQL warehouse id: 1b331b704066b677.
+  # http_path format: /sql/1.0/warehouses/1b331b704066b677
+  # On a deployed Databricks App these typically come from the attached SQL
+  # warehouse resource; set them here (or as deploy secrets) to override.
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "1b331b704066b677"
+  - name: DATABRICKS_HTTP_PATH
+    value: "/sql/1.0/warehouses/1b331b704066b677"
+  - name: DATABRICKS_SERVER_HOSTNAME
+    value: "dbc-54942fa9-145a.cloud.databricks.com"
+  # No static DATABRICKS_TOKEN: on a deployed App the warehouse is reached via the
+  # app's service-principal OAuth (Databricks SDK), wired in lib/data.py::_wh_connect.
+
+  # --- Governed gold catalog/schema -----------------------------------------
+  # Single catalog `workspace`; gold decision tables/views live in caregap_gold.
+  - name: CAREGAP_CATALOG
+    value: "workspace"
+  - name: CAREGAP_GOLD_SCHEMA
+    value: "caregap_gold"

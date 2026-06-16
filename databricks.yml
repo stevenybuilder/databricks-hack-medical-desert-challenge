@@ -1,0 +1,53 @@
+# CareGap — Declarative Automation Bundle (DABs)
+# Databricks Free Edition: serverless compute only, single catalog `workspace`.
+bundle:
+  name: caregap
+
+include:
+  - resources/*.yml
+
+# Keep the synced bundle small: only databricks/ notebooks, resources/, and app/
+# need to reach the workspace. Heavy local artifacts, data, and binaries are excluded
+# (the deployed app reads governed gold tables via the SQL warehouse, not local CSVs).
+sync:
+  exclude:
+    - output/**
+    - .venv/**
+    - .git/**
+    - .playwright-cli/**
+    - "**/__pycache__/**"
+    - "*.pdf"
+    - "*.png"
+    - "*.csv"
+    - "*.ipynb"
+    - ".DS_Store"
+
+variables:
+  catalog:
+    description: "Unity Catalog for all CareGap assets (Free Edition: single catalog)."
+    default: workspace
+  bronze_schema:
+    description: Schema for raw bronze Delta tables.
+    default: caregap_bronze
+  silver_schema:
+    description: Schema for cleaned/normalized silver tables.
+    default: caregap_silver
+  features_schema:
+    description: Schema for Feature Engineering in Unity Catalog tables.
+    default: caregap_features
+  gold_schema:
+    description: Schema for app-facing gold tables and views.
+    default: caregap_gold
+  models_schema:
+    description: Schema for registered models / scoring policies.
+    default: caregap_models
+  warehouse_id:
+    description: SQL warehouse used by app backend queries and views.
+    default: 1b331b704066b677
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      profile: "7474647301321645"

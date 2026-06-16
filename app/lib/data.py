@@ -19,6 +19,20 @@ from . import config
 UC_FACILITY_TABLE = "workspace.default.hackathon_facility_health_cleaned"
 UC_DISTRICT_TABLE = "workspace.default.hackathon_district_health_facility_cleaned"
 
+# Governed gold layer (materialized by DB-2). Catalog/schema are env-overridable so
+# the same app code runs against Free-Edition `workspace.caregap_gold` or any clone.
+CAREGAP_CATALOG = os.environ.get("CAREGAP_CATALOG", "workspace")
+CAREGAP_GOLD_SCHEMA = os.environ.get("CAREGAP_GOLD_SCHEMA", "caregap_gold")
+
+
+def _gold(name: str) -> str:
+    """Fully-qualified gold table/view name, e.g. workspace.caregap_gold.<name>."""
+    return f"{CAREGAP_CATALOG}.{CAREGAP_GOLD_SCHEMA}.{name}"
+
+
+def _is_warehouse() -> bool:
+    return os.environ.get("DATA_BACKEND", "csv").lower() == "warehouse"
+
 # Columns we actually need for Phase 1 (keep the 49MB read fast).
 _USECOLS = [
     "unique_id",
@@ -186,19 +200,46 @@ def load_facilities() -> pd.DataFrame:
     return _coerce(df)
 
 
-def _load_from_warehouse() -> pd.DataFrame:
-    """Query the cleaned facility table from the SQL warehouse.
+def _wh_connect():
+    """Open a SQL-warehouse connection.
 
-    In a deployed Databricks App these env vars come from the attached SQL
-    warehouse resource. Requires `databricks-sql-connector` (in requirements.txt).
+    Works both with a static token (local/dev: ``DATABRICKS_TOKEN`` set) and with
+    Databricks Apps OAuth (no token in env — auth comes from the deployed app's
+    service principal via the Databricks SDK). Accepts ``DATABRICKS_SERVER_HOSTNAME``
+    or the app-injected ``DATABRICKS_HOST`` (URL form) for the hostname.
     """
     from databricks import sql  # lazy import; only needed when deployed
 
-    with sql.connect(
-        server_hostname=os.environ["DATABRICKS_SERVER_HOSTNAME"],
-        http_path=os.environ["DATABRICKS_HTTP_PATH"],
-        access_token=os.environ.get("DATABRICKS_TOKEN"),
-    ) as conn:
+    host = (
+        os.environ.get("DATABRICKS_SERVER_HOSTNAME")
+        or os.environ.get("DATABRICKS_HOST", "")
+    ).replace("https://", "").replace("http://", "").strip("/")
+    http_path = os.environ["DATABRICKS_HTTP_PATH"]
+    token = os.environ.get("DATABRICKS_TOKEN")
+    # use_cloud_fetch=False forces inline Arrow results. Databricks Apps egress
+    # cannot reach the external CloudFetch storage host
+    # (*.storage.cloud.databricks.com), so cloud fetch hangs/fails; inline avoids it.
+    if token:
+        return sql.connect(server_hostname=host, http_path=http_path,
+                           access_token=token, use_cloud_fetch=False)
+    # Databricks Apps: authenticate as the app's service principal via the SDK.
+    from databricks.sdk.core import Config
+    cfg = Config()
+    return sql.connect(
+        server_hostname=host,
+        http_path=http_path,
+        credentials_provider=lambda: cfg.authenticate,
+        use_cloud_fetch=False,
+    )
+
+
+def _load_from_warehouse() -> pd.DataFrame:
+    """Query the cleaned facility table from the SQL warehouse.
+
+    In a deployed Databricks App auth comes from the attached SQL warehouse
+    resource. Requires `databricks-sql-connector` (in requirements.txt).
+    """
+    with _wh_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(f"DESCRIBE TABLE {UC_FACILITY_TABLE}")
             schema = cur.fetchall_arrow().to_pandas()
@@ -214,6 +255,195 @@ def _load_from_warehouse() -> pd.DataFrame:
             cols = ", ".join(select_exprs)
             cur.execute(f"SELECT {cols} FROM {UC_FACILITY_TABLE}")
             return cur.fetchall_arrow().to_pandas()
+
+
+# --- Governed gold decision tables (DB-2's caregap_gold) ---------------------
+#
+# When DATA_BACKEND=warehouse these read the governed gold tables/views; in every
+# other case (local dev, or any warehouse failure) they fall back to the local CSV
+# artifacts in output/data/. They NEVER raise to the UI — an empty DataFrame is the
+# worst case, so the app degrades gracefully when a gold object is missing.
+
+
+def _warehouse_query(query: str) -> pd.DataFrame:
+    """Run a read query against the SQL warehouse, returning a pandas DataFrame.
+
+    Raises on connection/SQL failure; callers wrap this and fall back to CSV.
+    """
+    with _wh_connect() as conn, conn.cursor() as cur:
+        cur.execute(query)
+        return cur.fetchall_arrow().to_pandas()
+
+
+def _load_gold(table_or_view: str, fallback_path) -> pd.DataFrame:
+    """Generic gold reader: warehouse SELECT * when in warehouse mode, else CSV.
+
+    On ANY warehouse error (missing object, auth, network) we fall back to the local
+    CSV artifact. If that is also absent we return an empty DataFrame. Never raises.
+    """
+    if _is_warehouse():
+        try:
+            df = _warehouse_query(f"SELECT * FROM {_gold(table_or_view)}")
+            return _coerce_known_numeric(df)
+        except Exception:
+            # Fall through to the local artifact so the UI still renders.
+            pass
+    try:
+        df = _read_optional_csv(fallback_path)
+        return _coerce_known_numeric(df) if not df.empty else df
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_gold_interventions() -> pd.DataFrame:
+    """Intervention recommendations.
+
+    Warehouse: view `v_intervention_recommender` (falls back to table
+    `intervention_recommendations`). Local: output/data/intervention_recommendations.csv.
+    """
+    if _is_warehouse():
+        for obj in ("v_intervention_recommender", "intervention_recommendations"):
+            try:
+                return _coerce_known_numeric(_warehouse_query(f"SELECT * FROM {_gold(obj)}"))
+            except Exception:
+                continue
+    return _load_gold(
+        "intervention_recommendations",
+        config.data_dir() / "intervention_recommendations.csv",
+    )
+
+
+def load_gold_provider_confidence() -> pd.DataFrame:
+    """Provider confidence.
+
+    Warehouse: view `v_provider_confidence` (falls back to table `provider_confidence`).
+    Local: output/data/conformal_facility_sets.csv (the closest available trust artifact).
+    """
+    if _is_warehouse():
+        for obj in ("v_provider_confidence", "provider_confidence"):
+            try:
+                return _coerce_known_numeric(_warehouse_query(f"SELECT * FROM {_gold(obj)}"))
+            except Exception:
+                continue
+    return _load_gold(
+        "provider_confidence",
+        config.data_dir() / "conformal_facility_sets.csv",
+    )
+
+
+def load_gold_scenario_simulations() -> pd.DataFrame:
+    """What-if scenario simulations.
+
+    Warehouse: view `v_scenario_simulator` (falls back to table `scenario_simulations`).
+    Local: output/data/scenario_simulations.csv if present, else empty.
+    """
+    if _is_warehouse():
+        for obj in ("v_scenario_simulator", "scenario_simulations"):
+            try:
+                return _coerce_known_numeric(_warehouse_query(f"SELECT * FROM {_gold(obj)}"))
+            except Exception:
+                continue
+    return _load_gold(
+        "scenario_simulations",
+        config.data_dir() / "scenario_simulations.csv",
+    )
+
+
+def load_medical_desert_scores() -> pd.DataFrame:
+    """Medical desert risk scores.
+
+    Warehouse: view `v_risk_map` (falls back to table `medical_desert_scores`).
+    Local: output/data/medical_desert_scores.csv if present, else empty.
+    """
+    if _is_warehouse():
+        for obj in ("v_risk_map", "medical_desert_scores"):
+            try:
+                return _coerce_known_numeric(_warehouse_query(f"SELECT * FROM {_gold(obj)}"))
+            except Exception:
+                continue
+    return _load_gold(
+        "medical_desert_scores",
+        config.data_dir() / "medical_desert_scores.csv",
+    )
+
+
+# --- Monitoring / feedback write-back ----------------------------------------
+#
+# These tie the app's local SQLite decisions module to the governed cloud tables in
+# caregap_gold. When DATA_BACKEND=warehouse they INSERT (parameterized); otherwise
+# they no-op so local dev never needs a warehouse. They never raise to the UI.
+
+DEFAULT_POLICY_VERSION = os.environ.get("CAREGAP_POLICY_VERSION", "v0")
+
+
+def _warehouse_insert(table: str, columns: list[str], values: list) -> bool:
+    """Parameterized INSERT into a gold table. Returns True on success, never raises."""
+    if not _is_warehouse():
+        return False
+    try:
+        placeholders = ", ".join(["?"] * len(columns))
+        col_list = ", ".join(columns)
+        stmt = f"INSERT INTO {_gold(table)} ({col_list}) VALUES ({placeholders})"
+        with _wh_connect() as conn, conn.cursor() as cur:
+            cur.execute(stmt, values)
+        return True
+    except Exception:
+        # Governed write-back is best-effort; failures must not break the UI.
+        return False
+
+
+def append_reviewer_feedback(
+    geography_id: str,
+    feedback_type: str,
+    notes: str = "",
+    reviewer: str | None = None,
+    payload: str = "",
+    status: str = "pending",
+    policy_version: str | None = None,
+) -> bool:
+    """Append a reviewer feedback row to caregap_gold.reviewer_feedback.
+
+    Warehouse mode: parameterized INSERT (returns True on success). Otherwise no-op
+    returning False. `feedback_type` is one of the architecture doc's feedback types
+    (e.g. provider_correction, recommendation_override, outcome_data, data_quality_flag).
+    """
+    columns = [
+        "geography_id", "feedback_type", "payload", "notes",
+        "reviewer", "status", "policy_version", "created_at",
+    ]
+    values = [
+        str(geography_id), str(feedback_type), str(payload), str(notes),
+        reviewer or os.environ.get("CAREGAP_REVIEWER", "app"),
+        str(status), policy_version or DEFAULT_POLICY_VERSION,
+        pd.Timestamp.utcnow().isoformat(),
+    ]
+    return _warehouse_insert("reviewer_feedback", columns, values)
+
+
+def append_recommendation_override(
+    geography_id: str,
+    original_intervention: str,
+    chosen_intervention: str,
+    notes: str = "",
+    reviewer: str | None = None,
+    status: str = "pending",
+    policy_version: str | None = None,
+) -> bool:
+    """Append a recommendation override to caregap_gold.recommendation_overrides.
+
+    Warehouse mode: parameterized INSERT. Otherwise no-op returning False.
+    """
+    columns = [
+        "geography_id", "original_intervention", "chosen_intervention",
+        "notes", "reviewer", "status", "policy_version", "created_at",
+    ]
+    values = [
+        str(geography_id), str(original_intervention), str(chosen_intervention),
+        str(notes), reviewer or os.environ.get("CAREGAP_REVIEWER", "app"),
+        str(status), policy_version or DEFAULT_POLICY_VERSION,
+        pd.Timestamp.utcnow().isoformat(),
+    ]
+    return _warehouse_insert("recommendation_overrides", columns, values)
 
 
 # --- Districts (Phase 2: leaderboard + region detail) ------------------------
@@ -938,12 +1168,7 @@ def geo_candidate_explanation(row: pd.Series) -> tuple[pd.DataFrame, pd.DataFram
 def load_districts() -> pd.DataFrame:
     """Load the cleaned district table (CSV or warehouse, same as facilities)."""
     if os.environ.get("DATA_BACKEND", "csv").lower() == "warehouse":
-        from databricks import sql
-        with sql.connect(
-            server_hostname=os.environ["DATABRICKS_SERVER_HOSTNAME"],
-            http_path=os.environ["DATABRICKS_HTTP_PATH"],
-            access_token=os.environ.get("DATABRICKS_TOKEN"),
-        ) as conn, conn.cursor() as cur:
+        with _wh_connect() as conn, conn.cursor() as cur:
             cur.execute(f"SELECT * FROM {UC_DISTRICT_TABLE}")
             d = cur.fetchall_arrow().to_pandas()
     else:

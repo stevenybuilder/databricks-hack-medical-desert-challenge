@@ -1,0 +1,6 @@
+# MLflow experiment for CareGap scoring-policy tracking (notebook 04).
+# Tracks rule-based / ML scoring-policy versions, params, metrics, artifacts.
+resources:
+  experiments:
+    caregap_scoring_policies:
+      name: /Users/${workspace.current_user.userName}/caregap_scoring_policies

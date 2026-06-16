@@ -1,0 +1,16 @@
+# CareGap Databricks App.
+# Env vars and start command live in app/app.yaml (owned by DB-4), NOT here.
+# source_code_path points at the app directory; the app runs on serverless.
+resources:
+  apps:
+    caregap_app:
+      name: caregap-app
+      description: CareGap — medical desert intelligence app (risk map, recommender, confidence layer, scenario simulator).
+      source_code_path: ../app
+      # Bind the serverless SQL warehouse so the app's service principal can query
+      # the governed gold tables (CAN_USE grants warehouse access + SP identity).
+      resources:
+        - name: sql_warehouse
+          sql_warehouse:
+            id: 1b331b704066b677
+            permission: CAN_USE

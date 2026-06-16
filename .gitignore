@@ -41,3 +41,7 @@ output/data/human_verification_seed_queue.csv
 output/data/missing_data_seed_summary.json
 output/data/planner_decisions.sqlite
 output/sql/google_geocoding_results*.sql
+
+# CatBoost / MLflow local training artifacts (regenerable; models live in Unity Catalog)
+catboost_info/
+output/mlruns/
