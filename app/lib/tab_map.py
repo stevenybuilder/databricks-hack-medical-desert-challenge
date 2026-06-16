@@ -2,7 +2,7 @@
 
 Entry point: ``render(facilities, districts, specialty) -> None``.
 
-Layout standard (see DESIGN_SYSTEM.md — VFMatch-style composition): a LEFT frosted
+Layout standard (see docs/DESIGN_SYSTEM.md — VFMatch-style composition): a LEFT frosted
 DISTRICT RAIL (search + 2 compact KPIs + a scrollable, ranked care-gap list with
 tone-coded action pills) sits beside the pydeck map as the CENTERPIECE filling the
 right column, with a small FLOATING legend chip (``.mdn-float`` via
@@ -440,7 +440,7 @@ def _floating_legend(view_mode: str, n_plotted: int, filtered_n: int,
     """The color-ramp legend rendered as a floating chip (``.mdn-float``) over the map.
 
     Streamlit's flow makes true absolute-over-canvas positioning brittle, so per
-    DESIGN_SYSTEM.md this acceptable compromise sits directly above the map within
+    docs/DESIGN_SYSTEM.md this acceptable compromise sits directly above the map within
     the right column — styled as a compact floating chip, not a full-width bar.
     """
     if view_mode == "Medical deserts":

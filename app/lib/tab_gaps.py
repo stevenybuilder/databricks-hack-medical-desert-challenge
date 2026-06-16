@@ -3,7 +3,7 @@ depth opt-in behind expanders.
 
 Entry point: ``render(districts, specialty) -> None``.
 
-Layout philosophy (see DESIGN_SYSTEM.md density rule): the default view answers
+Layout philosophy (see docs/DESIGN_SYSTEM.md density rule): the default view answers
 "where is the worst gap and what do I do" — a calm wow-stat anchor, ≤2 KPIs, a
 compact top-6, and the selected-district drill-down. Everything heavier lives
 behind ONE ``st.segmented_control`` sub-nav (Ranking · At a glance · Method &

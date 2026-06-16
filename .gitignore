@@ -21,6 +21,11 @@ env/
 secrets/
 .playwright-cli/
 output/playwright/
+output/catboost/
+output/jupyter-notebook/
+output/plots/
+output/screenshots/
+output/sql/
 
 # Google Maps/Geocoding API responses can include keys in URLs and public contact/address evidence.
 output/data/google_geocoding_results*.csv

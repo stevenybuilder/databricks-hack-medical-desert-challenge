@@ -44,7 +44,7 @@ _CONDITION_HELP = {
 
 # Copilot styling consumes the SHARED design tokens (defined in ui.inject_css's
 # :root, injected first in app entry) so the Copilot matches the rest of the app
-# — same font, same text/muted/accent colors. See DESIGN_SYSTEM.md.
+# — same font, same text/muted/accent colors. See docs/DESIGN_SYSTEM.md.
 _CSS = """
 <style>
 /* Hero greeting: confident display type with calm, airy spacing above the chips. */

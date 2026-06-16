@@ -6,7 +6,8 @@ catalog of plausible interventions with a transparent expected-value-style score
     EV = P(addresses_need) * benefit - P(wrong) * harm - operating_cost
 
 Every component is a transparent heuristic built only from columns that actually
-exist in the cleaned district table (see tricky_fields.md / Bayesian_stats doc).
+exist in the cleaned district table (see docs/archive/tricky_fields.md /
+docs/archive/Bayesian_stats_product_strategy.md).
 The strategy doc references signals the cleaned tables do NOT have — there is no
 broadband column and no elderly-share column (only population_below_age_15_years_pct).
 We do not fabricate them: telehealth is treated as a LOW-confidence default and we

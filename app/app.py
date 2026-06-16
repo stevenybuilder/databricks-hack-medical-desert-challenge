@@ -4,7 +4,7 @@ Thin app entry: page config, CSS, data load, the specialty lens, and a 3-tab
 nav (Map · Top care gaps · Copilot) dispatching to the per-tab modules. Tab
 internals live in ``lib/tab_map.py``, ``lib/tab_gaps.py`` and ``lib/copilot.py``;
 shared helpers/constants live in ``lib/tab_common.py``. The design system (tokens
-+ reusable components) lives in ``lib/ui.py`` — see DESIGN_SYSTEM.md.
++ reusable components) lives in ``lib/ui.py`` — see docs/DESIGN_SYSTEM.md.
 
 Run locally:
     .venv/bin/streamlit run app/app.py

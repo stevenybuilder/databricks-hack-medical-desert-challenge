@@ -81,7 +81,7 @@ Run once against the warehouse (id `1b331b704066b677`) or a bound notebook:
 ## Assumptions DB-2 must satisfy (gold column names)
 
 The app reads gold tables with `SELECT *`, so it tolerates extra columns, but the
-decisions/UI layer expects these names (per `databricks_tools_architecture.md`):
+decisions/UI layer expects these names (per `docs/archive/databricks_tools_architecture.md`):
 
 - `intervention_recommendations`: `geography_id`, `rank`, `intervention_type`,
   `expected_impact_score`, `recommendation_confidence`, `why_recommended`, `data_limitations`, `model_version`, `created_at`.

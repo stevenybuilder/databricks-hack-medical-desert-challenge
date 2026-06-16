@@ -73,12 +73,15 @@ scripts/
   build_conformal_calibration.py
   build_statistical_decision_report.py
 docs/
+  DESIGN_SYSTEM.md        # UI design system notes
+  archive/                # Working notes and implementation logs
+  assets/                 # Reference PDFs and static screenshots
   devpost/                # Devpost copy and media notes
-output/data/              # Public cleaned aggregate artifacts used by CSV mode
+output/data/              # Curated cleaned artifacts used by CSV mode
 Dockerfile                # Cloud Run public demo image
 ```
 
-Sensitive geocoding outputs, API keys, local caches, SQLite state, and raw/debug artifacts are excluded by `.gitignore`, `.dockerignore`, and `.gcloudignore`.
+Sensitive geocoding outputs, API keys, local caches, SQLite state, generated notebooks, plot exports, model binaries, screenshots, and raw/debug artifacts are excluded by `.gitignore`, `.dockerignore`, and `.gcloudignore`.
 
 ## Run Locally
 

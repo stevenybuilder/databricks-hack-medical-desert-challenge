@@ -1,7 +1,8 @@
 """What-If Scenario Simulator + best/most-likely/worst-case supply bands.
 
-Implements Feature 4 of Bayesian_stats_product_strategy.md (What-If Scenario
-Simulator) and Ambitious Idea 4 of tricky_fields.md (best/most-likely/worst-case
+Implements Feature 4 of docs/archive/Bayesian_stats_product_strategy.md
+(What-If Scenario Simulator) and Ambitious Idea 4 of
+docs/archive/tricky_fields.md (best/most-likely/worst-case
 uncertainty bands for medical-desert planning).
 
 Design rules honored here:
@@ -87,7 +88,7 @@ def facilities_for_district(district_row: pd.Series, facilities: pd.DataFrame) -
 
 
 # --------------------------------------------------------------------------- #
-# Best / most-likely / worst-case supply bands  (tricky_fields.md idea 4)
+# Best / most-likely / worst-case supply bands (docs/archive/tricky_fields.md idea 4)
 # --------------------------------------------------------------------------- #
 def scenario_bands(
     district_row: pd.Series,

@@ -37,7 +37,7 @@ _CSS = """
   /* tabular numerals -> the precise HUD / command-center readout feel */
   --mdn-tnum: "tnum" 1, "lnum" 1;
 
-  /* ===== DESIGN SYSTEM TOKENS (single source of truth — see DESIGN_SYSTEM.md) =====
+  /* ===== DESIGN SYSTEM TOKENS (single source of truth — see docs/DESIGN_SYSTEM.md) =====
      Semantic color tokens. worse = red per the app's higher_is_worse convention.
      These are the canonical names tabs reference; the --mdn-* aliases above are
      kept for back-compat and now point at the same hues. */
@@ -1096,7 +1096,7 @@ def header() -> None:
 
 
 # ---- Standardized tab primitives (every tab consumes these) -----------------
-# See DESIGN_SYSTEM.md. These four enforce the consistency the next-wave tab
+# See docs/DESIGN_SYSTEM.md. These four enforce the consistency the next-wave tab
 # agents must inherit: one title treatment, a capped KPI row, one expander
 # affordance, and one section-header style.
 
@@ -2483,7 +2483,7 @@ def floating_card(inner_html: str) -> None:
     opaque than ``.mdn-glass`` so text stays legible against a bright basemap).
     The map agent may also apply the ``.mdn-float`` CSS class directly to its
     own positioned container instead of calling this — both are supported and
-    documented in DESIGN_SYSTEM.md. ``inner_html`` is trusted markup (the caller
+    documented in docs/DESIGN_SYSTEM.md. ``inner_html`` is trusted markup (the caller
     is responsible for escaping any user/data text it interpolates).
     """
     st.markdown(f'<div class="mdn-float">{inner_html}</div>', unsafe_allow_html=True)
