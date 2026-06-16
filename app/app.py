@@ -273,7 +273,7 @@ def map_tab(facilities: pd.DataFrame, specialty: str) -> None:
                              "padding": "8px"}}
         deck = pdk.Deck(layers=layers, initial_view_state=view,
                         map_style=config.MAP_STYLES[basemap], tooltip=tooltip)
-        event = st.pydeck_chart(deck, use_container_width=True, height=680, key="map",
+        event = st.pydeck_chart(deck, height=680, key="map",
                                 on_select="rerun", selection_mode="single-object")
         ui.legend("Lower", "Higher", higher_is_worse)
 
@@ -984,6 +984,21 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
+    st.markdown(
+        """
+        <div class="mdn-nav-groups">
+          <span class="mdn-nav-grp mdn-nav-explore">Explore</span>
+          <span class="mdn-nav-sep">Map · Top care gaps</span>
+          <span class="mdn-nav-sep">|</span>
+          <span class="mdn-nav-grp mdn-nav-act">Act</span>
+          <span class="mdn-nav-sep">Interventions · Scenario lab</span>
+          <span class="mdn-nav-sep">|</span>
+          <span class="mdn-nav-grp mdn-nav-verify">Verify</span>
+          <span class="mdn-nav-sep">Uncertainty · Trust · Decisions</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     primary_view = st.segmented_control(
         "Primary view",
         ["Map", "Top care gaps", "Interventions", "Scenario lab",
