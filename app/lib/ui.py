@@ -2282,21 +2282,21 @@ def region_detail(row: pd.Series, specialty: str, districts: pd.DataFrame | None
 
     with detail("More detail: medical-condition gaps"):
         if not conds.empty:
-            st.altair_chart(charts.condition_gaps(conds), use_container_width=True,
-                            key="region_condition_gaps_chart")
+            cols = [c for c in ["Condition", "District %", "National %", "Δ vs national"]
+                    if c in conds.columns]
+            st.dataframe(conds[cols].head(6), hide_index=True, width="stretch", height=235)
             worst = conds.iloc[0]
             st.caption(
                 f"Worst gap: {worst['Condition']} "
                 f"({worst['District %']}% district vs {worst['National %']}% national). "
-                "Bar = district; gray tick = national median."
+                "Use this to choose the first clinical specialty."
             )
         else:
             st.caption("No NFHS condition indicators available for this district.")
 
     with detail("More detail: score formula"):
         breakdown, total, _ = data.care_gap_breakdown(row)
-        st.altair_chart(charts.care_gap_contributions(breakdown), use_container_width=True,
-                        key="region_care_gap_contributions_chart")
+        st.dataframe(breakdown, hide_index=True, width="stretch", height=160)
         st.caption(f"Care-gap score = {total:.2f}: 0.55 need + 0.25 supply scarcity + 0.20 low trust.")
 
     with detail("Why this recommendation"):
