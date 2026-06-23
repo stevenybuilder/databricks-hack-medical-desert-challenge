@@ -9,6 +9,7 @@ can reuse them without re-importing the app entry module.
 from __future__ import annotations
 
 import pandas as pd
+import streamlit as st
 
 from . import data
 
@@ -72,12 +73,96 @@ ACTION_TONES = {
 }
 
 ACTION_REASON = {
-    "real_desert_candidate": "High need and low trustworthy supply",
+    "real_desert_candidate": "High need and weak provider evidence",
     "phantom_desert_or_verification_gap": "Decision depends on fragile evidence",
     "supply_record_quality_problem": "Supply likely exists, but records are weak",
-    "referral_or_capacity_candidate": "Trustworthy capacity is already visible",
+    "referral_or_capacity_candidate": "Provider capacity evidence is already visible",
     "mixed_or_monitor": "Mixed signal; track but do not overcommit",
 }
+
+DISTRICT_SCOPE_ALL = "All districts"
+DISTRICT_SCOPE_WITH_PROVIDER_CLAIMS = "With provider claims"
+DISTRICT_SCOPE_NO_PROVIDER_CLAIMS = "No provider claims"
+DISTRICT_SCOPE_OPTIONS = (
+    DISTRICT_SCOPE_ALL,
+    DISTRICT_SCOPE_WITH_PROVIDER_CLAIMS,
+    DISTRICT_SCOPE_NO_PROVIDER_CLAIMS,
+)
+DISTRICT_SCOPE_STATE_KEY = "district_scope_filter"
+
+
+def _normalize_district_scope(scope: str | None) -> str:
+    aliases = {
+        "Has provider claims": DISTRICT_SCOPE_WITH_PROVIDER_CLAIMS,
+        "No mapped claims": DISTRICT_SCOPE_NO_PROVIDER_CLAIMS,
+    }
+    scope = aliases.get(str(scope), str(scope))
+    return scope if scope in DISTRICT_SCOPE_OPTIONS else DISTRICT_SCOPE_ALL
+
+
+def _district_scope_value() -> str:
+    """Return the canonical district-scope filter shared by map and gaps tabs."""
+    scope = _normalize_district_scope(st.session_state.get(DISTRICT_SCOPE_STATE_KEY))
+    st.session_state[DISTRICT_SCOPE_STATE_KEY] = scope
+    return scope
+
+
+def _clear_district_scope_dependents(clear_keys: tuple[str, ...] = ()) -> None:
+    for key in clear_keys:
+        st.session_state.pop(key, None)
+
+
+def _district_scope_filter(districts: pd.DataFrame, scope: str) -> pd.DataFrame:
+    """Filter district rows by whether any provider claims are mapped locally."""
+    if districts is None or districts.empty:
+        return pd.DataFrame()
+    observed = pd.to_numeric(
+        districts.get("observed_facility_rows", pd.Series(0, index=districts.index)),
+        errors="coerce",
+    ).fillna(0)
+    scope = _normalize_district_scope(scope)
+    if scope == DISTRICT_SCOPE_WITH_PROVIDER_CLAIMS:
+        return districts[observed > 0].copy()
+    if scope == DISTRICT_SCOPE_NO_PROVIDER_CLAIMS:
+        return districts[observed <= 0].copy()
+    return districts.copy()
+
+
+def _district_scope_caption(districts: pd.DataFrame, scope: str) -> str:
+    """Short planner-facing caption for the active district-scope filter."""
+    if districts is None or districts.empty:
+        return "No districts in this view."
+    scope = _normalize_district_scope(scope)
+    filtered = _district_scope_filter(districts, scope)
+    total = len(districts)
+    if scope == DISTRICT_SCOPE_WITH_PROVIDER_CLAIMS:
+        return f"{len(filtered):,}/{total:,} districts with mapped provider claims · click for facility detail."
+    if scope == DISTRICT_SCOPE_NO_PROVIDER_CLAIMS:
+        return f"{len(filtered):,}/{total:,} districts with no mapped provider claims · best for new supply."
+    return f"{total:,} districts · national view."
+
+
+def _district_scope_control(
+    districts: pd.DataFrame,
+    widget_key: str,
+    *,
+    clear_on_change: tuple[str, ...] = (),
+) -> tuple[str, pd.DataFrame]:
+    """Compact shared filter UI backed by one global planner-scope value."""
+    active_scope = _district_scope_value()
+    widget_args = {
+        "key": DISTRICT_SCOPE_STATE_KEY,
+        "label_visibility": "collapsed",
+        "width": "stretch",
+        "on_change": _clear_district_scope_dependents,
+        "args": (tuple(clear_on_change),),
+    }
+    if DISTRICT_SCOPE_STATE_KEY not in st.session_state:
+        widget_args["default"] = active_scope
+    choice = st.segmented_control("District scope", DISTRICT_SCOPE_OPTIONS, **widget_args)
+    scope = _normalize_district_scope(choice or st.session_state.get(DISTRICT_SCOPE_STATE_KEY))
+    st.caption(_district_scope_caption(districts, scope))
+    return scope, _district_scope_filter(districts, scope)
 
 
 # --- Numeric formatters ------------------------------------------------------

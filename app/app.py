@@ -4,7 +4,7 @@ Thin app entry: page config, CSS, data load, the specialty lens, and a 3-tab
 nav (Map · Top care gaps · Copilot) dispatching to the per-tab modules. Tab
 internals live in ``lib/tab_map.py``, ``lib/tab_gaps.py`` and ``lib/copilot.py``;
 shared helpers/constants live in ``lib/tab_common.py``. The design system (tokens
-+ reusable components) lives in ``lib/ui.py`` — see DESIGN_SYSTEM.md.
++ reusable components) lives in ``lib/ui.py`` — see docs/DESIGN_SYSTEM.md.
 
 Run locally:
     .venv/bin/streamlit run app/app.py
@@ -12,6 +12,7 @@ Run locally:
 from __future__ import annotations
 
 import html
+import re
 
 import streamlit as st
 
@@ -145,9 +146,73 @@ def _districts():
     return data.load_districts()
 
 
+@st.cache_data(show_spinner="Calibrating provider trust…")
+def _districts_with_provider_trust(districts, facilities):
+    return data.attach_provider_trust(districts, facilities)
+
+
+def _route_slug(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text == "?":
+        return "?"
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _query_value(params: object, key: str) -> str:
+    try:
+        values = params.get_all(key)
+        if values:
+            return str(values[-1])
+    except (AttributeError, KeyError, TypeError):
+        pass
+
+    try:
+        value = params.get(key)  # type: ignore[attr-defined]
+    except (AttributeError, KeyError, TypeError):
+        return ""
+    if isinstance(value, (list, tuple)):
+        return str(value[-1]) if value else ""
+    return str(value or "")
+
+
+def _view_from_query(value: object) -> str | None:
+    return {
+        "care gaps": "Top care gaps",
+        "copilot": "Copilot",
+        "gap": "Top care gaps",
+        "gaps": "Top care gaps",
+        "map": "Map",
+        "maps": "Map",
+        "top care gaps": "Top care gaps",
+    }.get(_route_slug(value))
+
+
+def _apply_demo_route_from_query() -> None:
+    """One-shot query-param routing for deterministic screenshot demos."""
+    params = st.query_params if hasattr(st, "query_params") else st.experimental_get_query_params()
+    tab_value = _query_value(params, "tab") or _query_value(params, "view")
+    mode_value = _query_value(params, "copilot_mode") or _query_value(params, "mode")
+    route_token = f"tab={_route_slug(tab_value)};mode={_route_slug(mode_value)}"
+    if route_token == "tab=;mode=":
+        st.session_state.pop("_demo_route_token", None)
+        return
+    if st.session_state.get("_demo_route_token") == route_token:
+        return
+
+    routed_view = _view_from_query(tab_value)
+    routed_mode = copilot.route_mode_from_query(mode_value)
+    if routed_view:
+        st.session_state["primary_view"] = routed_view
+    if routed_mode:
+        st.session_state["cp_mode"] = routed_mode
+        st.session_state["primary_view"] = "Copilot"
+    st.session_state["_demo_route_token"] = route_token
+
+
 def main() -> None:
+    _apply_demo_route_from_query()
     facilities = _facilities()
-    districts = _districts()
+    districts = _districts_with_provider_trust(_districts(), facilities)
     ui.header()
 
     # E4: header collapsed to one line. The redundant orbit-note bubble and the
@@ -161,16 +226,16 @@ def main() -> None:
     primary_view = st.segmented_control(
         "Primary view",
         ["Map", "Top care gaps", "Copilot"],
-        default="Map",
+        default=None if "primary_view" in st.session_state else "Map",
         label_visibility="collapsed",
         key="primary_view",
         width="stretch",
     )
-    primary_view = primary_view or "Map"
+    primary_view = primary_view or st.session_state.get("primary_view") or "Map"
     if primary_view == "Map":
         tab_map.render(facilities, districts, specialty)
     elif primary_view == "Top care gaps":
-        tab_gaps.render(districts, specialty)
+        tab_gaps.render(facilities, districts, specialty)
     else:
         copilot.render_copilot(facilities, districts, specialty)
 

@@ -4,9 +4,9 @@ This module covers the hackathon CORE requirement to *persist user actions*
 (notes, overrides, shortlists, scenarios, review decisions) and two ambitious
 ideas from the project docs:
 
-  * tricky_fields.md "Ambitious Idea 3 — Conflict Resolution Interface"
+  * docs/archive/tricky_fields.md "Ambitious Idea 3 — Conflict Resolution Interface"
     (competing values across sources; planner chooses a planning assumption).
-  * Bayesian_stats_product_strategy.md §7 — the self-improving / hillclimbing
+  * docs/archive/Bayesian_stats_product_strategy.md §7 — the self-improving / hillclimbing
     loop, framed the enterprise-safe way: the system *proposes* validated
     improvements from real reviewer feedback, but a human approves before any
     "deployment". Nothing here auto-modifies the model or policy.
@@ -974,7 +974,7 @@ def _competing_values(row: pd.Series) -> pd.DataFrame:
     """Frame capacity claim + model estimate interval as competing sources.
 
     The dataset is single-source per row, so we honestly label the interval as
-    the *model's value range*, matching tricky_fields.md Ambitious Idea 3.
+    the *model's value range*, matching docs/archive/tricky_fields.md Ambitious Idea 3.
     """
     disp = pd.to_numeric(pd.Series([row.get("capacity_display_value")]), errors="coerce").iloc[0]
     low = pd.to_numeric(pd.Series([row.get("capacity_estimate_interval_low")]), errors="coerce").iloc[0]
@@ -1118,7 +1118,7 @@ def _render_shortlist(facilities: pd.DataFrame) -> None:
 def _derive_proposals(decisions: pd.DataFrame) -> List[dict]:
     """Turn persisted reviewer decisions into PROPOSED policy updates.
 
-    Mirrors Bayesian_stats_product_strategy.md §7: detect a repeated pattern in
+    Mirrors docs/archive/Bayesian_stats_product_strategy.md §7: detect a repeated pattern in
     real feedback, propose a small validated change, await human approval. These
     are proposals only — nothing is auto-deployed.
     """

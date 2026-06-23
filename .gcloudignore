@@ -8,6 +8,8 @@
 .databricks
 .playwright-cli
 catboost_info
+**/.DS_Store
+databricks.yml
 
 # Not needed by the standalone app
 databricks/
@@ -21,12 +23,32 @@ output/playwright/
 *.pdf
 *.png
 *.md
+*.ipynb
+
+# Ship only the small public aggregate artifacts needed by DATA_BACKEND=csv.
+output/data/*
+!output/data/facility_health_cleaned.csv
+!output/data/district_health_facility_cleaned.csv
+!output/data/intervention_recommendations.csv
+!output/data/intervention_recommendations_summary.json
+!output/data/conformal_calibration.json
+!output/data/conformal_facility_sets.csv
+!output/data/golden_facility_seed_report.json
+!output/data/facility_prediction_model_report.json
+!output/data/decision_category_volume_summary.csv
+!output/data/statistical_decision_policy_report.json
+!output/data/geocoder_uncertainty_priors.csv
+!output/data/active_learning_district_queue.csv
 
 # SENSITIVE — API keys / PII / geocoding (mirrors .gitignore). NEVER ship these.
 output/data/google_geocoding_results*.csv
 output/data/google_geocoding_raw*.jsonl
 output/data/google_maps_geocoding_*.csv
 output/data/google_maps_geocoding_*.jsonl
+output/data/google_place_photo_cache*.json
+output/data/google_places_*
+output/cache/google_places_*
+output/photos/
 output/data/geo_coordinate_correction_candidates.csv
 output/data/geo_coordinate_correction_summary.json
 output/data/geo_validation_remaining_severe_candidates.csv

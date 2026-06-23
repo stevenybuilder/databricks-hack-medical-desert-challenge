@@ -1,15 +1,13 @@
 # Databricks Apps configuration.
 # Local dev: `.venv/bin/streamlit run app/app.py`
 command:
-  - streamlit
-  - run
-  - app.py
-  - --server.port
-  - "8000"
-  - --server.address
-  - "0.0.0.0"
-  - --server.headless
-  - "true"
+  - sh
+  - -c
+  - >
+    streamlit run app.py
+    --server.port "${DATABRICKS_APP_PORT:-8000}"
+    --server.address 0.0.0.0
+    --server.headless true
 env:
   - name: STREAMLIT_SERVER_ENABLE_CORS
     value: "false"

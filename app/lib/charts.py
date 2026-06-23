@@ -6,6 +6,7 @@ value labels — the Superstore-style finish. All charts share one dark theme.
 """
 from __future__ import annotations
 import altair as alt
+import numpy as np
 import pandas as pd
 
 # Palette (matches the app's dark tokens).
@@ -22,6 +23,26 @@ ACTION_COLORS = {
     "Deploy": TEAL, "Verify first": AMBER, "Fix records": RED,
     "Refer": BLUE, "Monitor": SLATE,
 }
+
+
+def _empty_chart(message: str = "No chart data available.", height: int = 90) -> alt.Chart:
+    """Return a valid inert chart instead of letting Vega render empty extents."""
+    d = pd.DataFrame({"message": [message]})
+    return _dark(
+        alt.Chart(d).mark_text(
+            align="left",
+            baseline="middle",
+            color=MUTE,
+            fontSize=12,
+            dx=4,
+        ).encode(text="message:N").properties(height=height)
+    )
+
+
+def _finite_numeric(series: pd.Series) -> pd.Series:
+    """Coerce numeric chart fields and remove inf values before Vega sees them."""
+    values = pd.to_numeric(series, errors="coerce")
+    return values.mask(~np.isfinite(values))
 
 
 def _dark(chart: alt.Chart) -> alt.Chart:
@@ -43,9 +64,21 @@ def condition_gaps(conds: pd.DataFrame) -> alt.Chart:
     Bar = district value; gray tick = national median (the benchmark); bar color =
     Δ vs national (deeper red = worse). Mirrors a Tableau 'vs benchmark' view.
     """
+    if conds is None or len(conds) == 0:
+        return _empty_chart("No condition-gap data available.", height=110)
     d = conds.rename(columns={
         "Condition": "condition", "District %": "district_pct",
         "National %": "national_pct", "Δ vs national": "delta"}).copy()
+    required = {"condition", "district_pct", "national_pct", "delta"}
+    if not required.issubset(d.columns):
+        return _empty_chart("Condition-gap fields are unavailable.", height=110)
+    d["district_pct"] = _finite_numeric(d["district_pct"])
+    d["national_pct"] = _finite_numeric(d["national_pct"])
+    d["delta"] = _finite_numeric(d["delta"]).fillna(0.0)
+    d["condition"] = d["condition"].astype(str)
+    d = d.dropna(subset=["district_pct", "national_pct"])
+    if d.empty:
+        return _empty_chart("No finite condition-gap data available.", height=110)
     order = d["condition"].tolist()  # already severity-sorted
 
     base = alt.Chart(d).encode(
@@ -69,13 +102,23 @@ def condition_gaps(conds: pd.DataFrame) -> alt.Chart:
 
 def care_gap_contributions(breakdown: pd.DataFrame) -> alt.Chart:
     """The additive care-gap score as horizontal contribution bars (sums to the score)."""
+    if breakdown is None or len(breakdown) == 0:
+        return _empty_chart("No score-breakdown data available.", height=100)
     d = breakdown.rename(columns={"Component": "component", "Contribution": "contribution"}).copy()
+    if not {"component", "contribution"}.issubset(d.columns):
+        return _empty_chart("Score-breakdown fields are unavailable.", height=100)
+    d["component"] = d["component"].astype(str)
+    d["contribution"] = _finite_numeric(d["contribution"])
+    d = d.dropna(subset=["contribution"])
+    if d.empty:
+        return _empty_chart("No finite score-breakdown data available.", height=100)
     order = d["component"].tolist()
+    max_x = max(0.6, float(d["contribution"].max()) * 1.15 if len(d) else 0.6)
     base = alt.Chart(d).encode(
         y=alt.Y("component:N", sort=order, title=None, axis=alt.Axis(labelLimit=220)))
     bars = base.mark_bar(height=18, cornerRadiusEnd=3).encode(
         x=alt.X("contribution:Q", title="Contribution to care-gap score",
-                scale=alt.Scale(domain=[0, 0.6])),
+                scale=alt.Scale(domain=[0, max_x])),
         color=alt.Color("contribution:Q", scale=alt.Scale(scheme="yelloworangered"), legend=None),
         tooltip=[alt.Tooltip("component:N", title="Component"),
                  alt.Tooltip("contribution:Q", title="Contribution", format=".3f")])
@@ -104,14 +147,21 @@ def desert_quadrant(districts: pd.DataFrame) -> alt.Chart:
     """Care gap (y) vs confidence (x), so planners separate REAL deserts from DATA-POOR
     regions. Top-right = high gap + well-evidenced (act now); top-left = high gap but
     low confidence (verify first). The core 'how sure are we?' view for Track 2."""
-    src = districts[["district_data_quality_score", "care_gap_score",
-                     "planning_category", "district_name", "state_ut"]].copy()
+    if districts is None or len(districts) == 0:
+        return _empty_chart("No district data available.", height=160)
+    required = ["district_data_quality_score", "care_gap_score",
+                "planning_category", "district_name", "state_ut"]
+    if not set(required).issubset(districts.columns):
+        return _empty_chart("District confidence fields are unavailable.", height=160)
+    src = districts[required].copy()
     d = pd.DataFrame({
-        "confidence": pd.to_numeric(src["district_data_quality_score"], errors="coerce"),
-        "gap": pd.to_numeric(src["care_gap_score"], errors="coerce"),
+        "confidence": _finite_numeric(src["district_data_quality_score"]),
+        "gap": _finite_numeric(src["care_gap_score"]),
         "Category": src["planning_category"].map(PLANNING_LABELS).fillna("Monitor"),
         "name": src["district_name"].astype(str) + ", " + src["state_ut"].astype(str),
     }).dropna(subset=["confidence", "gap"])
+    if d.empty:
+        return _empty_chart("No finite district confidence data available.", height=160)
     dom = [PLANNING_LABELS[k] for k in PLANNING_COLORS]
     rng = list(PLANNING_COLORS.values())
 
@@ -188,13 +238,12 @@ def small_multiples_deserts(districts: pd.DataFrame, top_conditions_fn,
     callable (row, districts) -> DataFrame with columns "Condition", "District %",
     "Δ vs national". A "top deserts at a glance" panel. Degrades to an empty chart.
     """
-    empty = _dark(alt.Chart(pd.DataFrame({"x": [0]})).mark_point(opacity=0).encode(
-        x=alt.X("x:Q", axis=None)).properties(height=80))
+    empty = _empty_chart("No district condition data available.", height=90)
     if districts is None or len(districts) == 0:
         return empty
 
     src = districts.copy()
-    src["_gap"] = pd.to_numeric(src.get("care_gap_score"), errors="coerce")
+    src["_gap"] = _finite_numeric(src.get("care_gap_score", pd.Series(dtype=float)))
     src = src.dropna(subset=["_gap"]).sort_values("_gap", ascending=False).head(int(n))
     if src.empty:
         return empty
@@ -222,6 +271,11 @@ def small_multiples_deserts(districts: pd.DataFrame, top_conditions_fn,
         return empty
 
     d = pd.DataFrame(rows)[["district", "condition", "district_pct", "delta"]]
+    d["district_pct"] = _finite_numeric(d["district_pct"])
+    d["delta"] = _finite_numeric(d["delta"]).fillna(0.0)
+    d = d.dropna(subset=["district_pct"])
+    if d.empty:
+        return empty
 
     bars = alt.Chart(d).mark_bar(height=12, cornerRadiusEnd=2).encode(
         x=alt.X("district_pct:Q", title=None, scale=alt.Scale(domain=[0, 100]),
@@ -281,8 +335,15 @@ def kpi_sparkline(values: list[float], label: str, value: str,
 
 def action_mix(mix: pd.DataFrame) -> alt.Chart:
     """Action distribution as a sorted horizontal bar with semantic per-action color."""
+    if mix is None or len(mix) == 0:
+        return _empty_chart("No action-mix data available.", height=100)
     d = mix.copy()
     d.columns = ["action", "districts"]
+    d["action"] = d["action"].astype(str)
+    d["districts"] = _finite_numeric(d["districts"])
+    d = d.dropna(subset=["districts"])
+    if d.empty:
+        return _empty_chart("No finite action-mix data available.", height=100)
     domain = list(ACTION_COLORS.keys())
     rng = [ACTION_COLORS[a] for a in domain]
     chart = alt.Chart(d).mark_bar(height=18, cornerRadiusEnd=3).encode(

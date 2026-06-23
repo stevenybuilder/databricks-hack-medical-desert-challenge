@@ -560,13 +560,13 @@ COND_LABELS = {
 # planning_category -> (chip label, recommendation sentence)
 PLANNING = {
     "real_desert_candidate": ("Deploy / build",
-        "Genuine unmet need with little trustworthy supply — strongest case to deploy."),
+        "Genuine unmet need with little confirmed provider evidence — strongest case to deploy."),
     "phantom_desert_or_verification_gap": ("Verify first",
         "Looks empty, but the few records are unverified — verify before acting."),
     "supply_record_quality_problem": ("Fix records",
         "Facilities likely exist but records are broken — fix data before planning."),
     "referral_or_capacity_candidate": ("Refer (capacity exists)",
-        "Trustworthy capacity is present — route patients here."),
+        "Provider evidence is comparatively strong — route patients here."),
     "mixed_or_monitor": ("Monitor",
         "Mixed signals — monitor; no single clear action."),
 }
@@ -973,7 +973,7 @@ _REASON_LABELS = {
     "missing_source_urls": "No source URL citation",
     "sparse_segment": "Sparse facility/operator/state segment",
     "high_care_gap": "High care-gap score",
-    "high_trust_gap": "Low trustworthy supply relative to need",
+    "high_trust_gap": "Low provider evidence relative to need",
     "higher_uncertainty_level": "District is marked higher uncertainty",
     "wide_rate_confidence_intervals": "Rate confidence intervals are wide",
     "small_observed_facility_sample": "Small observed facility sample",
@@ -1091,7 +1091,7 @@ def district_explanation(row: pd.Series, specialty: str) -> tuple[pd.DataFrame, 
     queue_row = active_district_match(row)
     sig, _ = SPECIALTY_DISTRICT.get(specialty, (None, []))
     service_value = row.get(sig) if sig else row.get("trustworthy_supply_rate")
-    service_name = sig.replace("_", " ") if sig else "trustworthy supply rate"
+    service_name = sig.replace("_", " ") if sig else "provider hard-check pass rate"
 
     drivers = [
         {
@@ -1102,7 +1102,7 @@ def district_explanation(row: pd.Series, specialty: str) -> tuple[pd.DataFrame, 
         {
             "Signal": "Care gap",
             "Value": _score(row.get("care_gap_score")),
-            "Interpretation": "High need combined with limited trustworthy/service-specific supply.",
+            "Interpretation": "High need combined with limited provider/service-specific evidence.",
         },
         {
             "Signal": service_name,
@@ -1110,7 +1110,7 @@ def district_explanation(row: pd.Series, specialty: str) -> tuple[pd.DataFrame, 
             "Interpretation": "Observed FDR rows with the relevant service signal; not a facility census.",
         },
         {
-            "Signal": "Trustworthy supply rate",
+            "Signal": "Provider hard-check pass rate",
             "Value": f"{_pct(row.get('trustworthy_supply_rate'))} ({_ci_text(row, 'trustworthy_supply_rate_ci_low', 'trustworthy_supply_rate_ci_high')})",
             "Interpretation": "Wilson interval over observed facility rows; wide bands mean fragile evidence.",
         },
@@ -1170,7 +1170,7 @@ def care_gap_breakdown(row: pd.Series) -> tuple[pd.DataFrame, float, bool]:
     comps = [
         ("Health need (NFHS burden)", 0.55, hn),
         ("Supply scarcity (few/no facilities)", 0.25, 1 - pct),
-        ("Low trustworthy supply", 0.20, 1 - tsr),
+        ("Low provider hard-check pass rate", 0.20, 1 - tsr),
     ]
     breakdown = pd.DataFrame([
         {"Component": name, "Weight × factor": f"{w:.2f} × {factor:.2f}",
@@ -1342,6 +1342,144 @@ def load_districts() -> pd.DataFrame:
     return d
 
 
+def attach_provider_trust(
+    districts: pd.DataFrame,
+    facilities: pd.DataFrame,
+    *,
+    posterior_weight: float = 0.75,
+    prior_strength: float = 2.0,
+) -> pd.DataFrame:
+    """Attach calibrated provider-trust columns to district rows.
+
+    The cleaned district table already carries the hard pass-rate
+    ``trustworthy_supply_rows / observed_facility_rows``. That rate is useful for
+    audit, but it is too brittle for small denominators: 0/1 becomes a misleading
+    visible 0%. This display metric blends the row-level Bayesian validity
+    posterior with an empirical-Bayes-smoothed hard pass rate, so thin samples
+    remain cautious without collapsing to false precision.
+    """
+    if districts is None or districts.empty:
+        return pd.DataFrame() if districts is None else districts.copy()
+    d = districts.copy()
+    defaults = {
+        "provider_trust_score": np.nan,
+        "provider_trust_label": "Not scored",
+        "provider_trust_caption": "No mapped provider claims",
+        "provider_validity_posterior_mean": np.nan,
+        "provider_pass_rate_smoothed": np.nan,
+        "provider_trust_prior_rate": np.nan,
+        "provider_trust_prior_strength": prior_strength,
+        "provider_trust_method": "Bayesian row evidence + smoothed pass-rate checks",
+    }
+    for col, value in defaults.items():
+        d[col] = value
+
+    if facilities is None or facilities.empty:
+        return d
+    if not {"district_name", "state_ut"}.issubset(facilities.columns):
+        return d
+
+    try:
+        from . import trust
+        scored = trust.facility_validity_posterior(facilities)
+        posterior = pd.to_numeric(scored.get("validity_posterior"), errors="coerce")
+    except Exception:
+        scored = facilities.copy()
+        posterior = pd.to_numeric(
+            scored.get("supply_data_confidence_score", scored.get("semantic_data_quality_score")),
+            errors="coerce",
+        )
+    if posterior.isna().all():
+        posterior = pd.to_numeric(scored.get("data_readiness_score"), errors="coerce")
+    scored = scored.copy()
+    scored["_provider_validity_posterior"] = posterior.clip(0, 1)
+    scored["_district_scope_key"] = scored["district_name"].astype(str).str.strip().str.casefold()
+    scored["_state_scope_key"] = scored["state_ut"].astype(str).str.strip().str.casefold()
+    scored = scored[scored["_district_scope_key"].ne("") & scored["_state_scope_key"].ne("")]
+    if scored.empty:
+        return d
+
+    passed = (
+        scored.get("trustworthy_supply_signal", pd.Series(False, index=scored.index))
+        .astype("boolean")
+        .fillna(False)
+        .astype(int)
+    )
+    global_pass_prior = float(passed.mean()) if len(passed) else 0.40
+    global_posterior_prior = float(scored["_provider_validity_posterior"].mean())
+    if np.isnan(global_posterior_prior):
+        global_posterior_prior = 0.65
+    posterior_weight = min(max(float(posterior_weight), 0.0), 1.0)
+    prior_strength = max(float(prior_strength), 0.0)
+
+    scored["_provider_passed"] = passed
+    grouped = scored.groupby(["_district_scope_key", "_state_scope_key"], dropna=False)
+    agg = pd.DataFrame({
+        "provider_observed_claim_rows": grouped.size(),
+        "provider_trust_pass_rows": grouped["_provider_passed"].sum(),
+        "provider_validity_posterior_mean": grouped["_provider_validity_posterior"].mean(),
+    }).reset_index()
+    agg["provider_validity_posterior_mean"] = (
+        pd.to_numeric(agg["provider_validity_posterior_mean"], errors="coerce")
+        .fillna(global_posterior_prior)
+        .clip(0, 1)
+    )
+    denom = agg["provider_observed_claim_rows"] + prior_strength
+    agg["provider_pass_rate_smoothed"] = (
+        (agg["provider_trust_pass_rows"] + prior_strength * global_pass_prior) / denom
+    ).clip(0, 1)
+    agg["provider_trust_score"] = (
+        posterior_weight * agg["provider_validity_posterior_mean"]
+        + (1 - posterior_weight) * agg["provider_pass_rate_smoothed"]
+    ).clip(0, 1)
+    agg["provider_trust_label"] = np.select(
+        [
+            agg["provider_trust_score"].ge(0.80),
+            agg["provider_trust_score"].ge(0.55),
+        ],
+        ["High trust", "Medium trust"],
+        default="Low trust",
+    )
+    agg["provider_trust_caption"] = np.select(
+        [
+            agg["provider_trust_score"].ge(0.80),
+            agg["provider_trust_score"].ge(0.55),
+        ],
+        ["Strong source and claim evidence", "Some evidence; call to confirm"],
+        default="Weak or conflicting evidence",
+    )
+    agg["provider_trust_prior_rate"] = global_pass_prior
+    agg["provider_trust_prior_strength"] = prior_strength
+    agg["provider_trust_method"] = "75% Bayesian row evidence + 25% smoothed pass-rate checks"
+
+    d["_district_scope_key"] = d["district_name"].astype(str).str.strip().str.casefold()
+    d["_state_scope_key"] = d["state_ut"].astype(str).str.strip().str.casefold()
+    merged = d.merge(
+        agg,
+        on=["_district_scope_key", "_state_scope_key"],
+        how="left",
+        suffixes=("", "_calibrated"),
+    )
+    for col in [
+        "provider_trust_score",
+        "provider_trust_label",
+        "provider_trust_caption",
+        "provider_validity_posterior_mean",
+        "provider_pass_rate_smoothed",
+        "provider_trust_prior_rate",
+        "provider_trust_prior_strength",
+        "provider_trust_method",
+    ]:
+        alt = f"{col}_calibrated"
+        if alt in merged.columns:
+            merged[col] = merged[alt].combine_first(merged[col])
+            merged = merged.drop(columns=[alt])
+    for col in ["provider_observed_claim_rows", "provider_trust_pass_rows"]:
+        if col in merged.columns:
+            merged[col] = pd.to_numeric(merged[col], errors="coerce")
+    return merged.drop(columns=["_district_scope_key", "_state_scope_key"], errors="ignore")
+
+
 def leaderboard(districts: pd.DataFrame, specialty: str, top_n: int = 15):
     """Rank districts by a (specialty-aware) care-gap score. Returns (df, gap_label)."""
     d = districts.copy()
@@ -1367,6 +1505,31 @@ def filter_facilities(df: pd.DataFrame, specialty: str, include_geo_flagged: boo
     if signal_col:
         out = out[out[signal_col]]
     return out
+
+
+def filter_facilities_to_districts(facilities: pd.DataFrame, districts: pd.DataFrame) -> pd.DataFrame:
+    """Restrict facility rows to a district subset without dropping non-mappable rows."""
+    if facilities is None:
+        return pd.DataFrame()
+    if districts is None or districts.empty or facilities.empty:
+        return pd.DataFrame(columns=facilities.columns)
+    join_cols = ["district_name", "state_ut"]
+    if not set(join_cols).issubset(facilities.columns) or not set(join_cols).issubset(districts.columns):
+        return facilities.copy()
+    keys = districts[join_cols].dropna().drop_duplicates().copy()
+    if keys.empty:
+        return pd.DataFrame(columns=facilities.columns)
+    f = facilities.copy()
+    f["_district_scope_key"] = f["district_name"].astype(str).str.strip().str.casefold()
+    f["_state_scope_key"] = f["state_ut"].astype(str).str.strip().str.casefold()
+    keys["_district_scope_key"] = keys["district_name"].astype(str).str.strip().str.casefold()
+    keys["_state_scope_key"] = keys["state_ut"].astype(str).str.strip().str.casefold()
+    scoped = f.merge(
+        keys[["_district_scope_key", "_state_scope_key"]].drop_duplicates(),
+        on=["_district_scope_key", "_state_scope_key"],
+        how="inner",
+    )
+    return scoped.drop(columns=["_district_scope_key", "_state_scope_key"], errors="ignore")
 
 
 def quality_snapshot(facilities: pd.DataFrame, districts: pd.DataFrame) -> dict[str, float | int]:
@@ -1669,7 +1832,10 @@ def verification_queue(
     top_n: int = 75,
 ) -> pd.DataFrame:
     """Build a prioritized facility queue for source enrichment and uncertainty review."""
-    d = filter_facilities(facilities, specialty, include_geo_flagged=True).copy()
+    d = facilities.copy()
+    signal_col = config.SPECIALTIES.get(specialty)
+    if signal_col and signal_col in d.columns:
+        d = d[d[signal_col].fillna(False).astype(bool)].copy()
     if d.empty:
         return pd.DataFrame()
 
@@ -1705,10 +1871,11 @@ def verification_queue(
         d = d.sort_values("review_priority", ascending=False)
 
     cols = [
-        "facility_name", "facilityTypeId", "address_city", "district_name", "state_ut",
+        "unique_id", "facility_name", "facilityTypeId", "address_city", "district_name", "state_ut",
+        "facility_latitude", "facility_longitude",
         "service_signal", "primary_concern", "verification_channel", "label_seed",
         "review_priority", "data_readiness_score", "join_confidence", "geo_quality",
-        "officialPhone", "email", "officialWebsite", "first_source_url", "claim_text",
+        "officialPhone", "email", "officialWebsite", "first_source_url", "claim_text", "source_urls",
     ]
     return d[[c for c in cols if c in d.columns]].head(top_n).reset_index(drop=True)
 
@@ -1867,13 +2034,19 @@ def district_hexes(districts: pd.DataFrame, resolution: int = 5) -> pd.DataFrame
     appear on the map. Colored by care_gap_score, normalized across districts.
     """
     cols = ["h3", "fill_color", "district_name", "state_ut", "care_gap_score",
-            "health_need_score", "trustworthy_supply_rate", "observed_facility_rows",
+            "health_need_score", "trustworthy_supply_rate", "provider_trust_score",
+            "observed_facility_rows",
             "zero_facility_desert", "lat", "lon", "tip"]
     if districts is None or districts.empty:
         return pd.DataFrame(columns=cols)
     d = districts.dropna(subset=["district_latitude", "district_longitude"]).copy()
     if d.empty:
         return pd.DataFrame(columns=cols)
+    if "provider_trust_score" not in d.columns:
+        d["provider_trust_score"] = pd.to_numeric(
+            d.get("trustworthy_supply_rate", pd.Series(np.nan, index=d.index)),
+            errors="coerce",
+        )
 
     gap = pd.to_numeric(d["care_gap_score"], errors="coerce")
     vmin, vmax = float(gap.min()), float(gap.max())

@@ -6,11 +6,12 @@ catalog of plausible interventions with a transparent expected-value-style score
     EV = P(addresses_need) * benefit - P(wrong) * harm - operating_cost
 
 Every component is a transparent heuristic built only from columns that actually
-exist in the cleaned district table (see tricky_fields.md / Bayesian_stats doc).
-The strategy doc references signals this dataset does NOT have — there is no
+exist in the cleaned district table (see docs/archive/tricky_fields.md /
+docs/archive/Bayesian_stats_product_strategy.md).
+The strategy doc references signals the cleaned tables do NOT have — there is no
 broadband column and no elderly-share column (only population_below_age_15_years_pct).
 We do not fabricate them: telehealth is treated as a LOW-confidence default and we
-explicitly note "broadband not in dataset"; where the doc names a missing signal we
+explicitly note "broadband unavailable"; where the doc names a missing signal we
 substitute the nearest real proxy and LABEL it as a proxy in the rationale.
 
 Public API:
@@ -183,7 +184,7 @@ def _cand_maternal(row, need):
     rationale = (
         "Maternal-care gap: institutional births are low and anaemia burden high, "
         "while observed maternity supply signal is thin. The telehealth leg is a "
-        "PROXY for prenatal monitoring (broadband not in dataset) — pair with transport."
+        "PROXY for prenatal monitoring (broadband unavailable) — pair with transport."
     )
     return dict(intervention="OB referral network + prenatal telehealth & transport",
                 p_addresses_need=float(np.clip(p, 0, 0.95)), need_gap=gap,
@@ -247,7 +248,7 @@ def _cand_insurance(row, need):
 
 def _cand_chw(row, need):
     # Records weak / supply uncertain -> human outreach. source_url_rate is ~1.0
-    # across this web-derived dataset, so we lean on contact evidence + review burden.
+    # across this web-derived facility data, so we lean on contact evidence + review burden.
     contact = _rate01(row.get("contact_evidence_rate"), 1.0)
     review = _rate01(row.get("needs_human_review_rate"))
     src = _rate01(row.get("source_url_rate"), 1.0)
@@ -261,8 +262,8 @@ def _cand_chw(row, need):
     ]
     rationale = (
         "Records are weak and supply is uncertain (high review burden / thin contact "
-        "evidence). Community health workers can both deliver outreach and ground-truth "
-        "what actually exists."
+        "evidence). Community health workers can deliver outreach and call or verify "
+        "what exists."
     )
     return dict(intervention="Community health worker outreach",
                 p_addresses_need=float(np.clip(p, 0, 0.95)), need_gap=gap,
@@ -290,8 +291,8 @@ def _cand_verify(row, need):
         f"critical_supply_gap_rate={crit*100:.0f}%",
     ]
     rationale = (
-        "Apparent gap may be a data artifact: facilities likely exist but records are "
-        "broken or unverified. Run a verify-first campaign before committing capital."
+        "Apparent gap may be a records issue: facilities likely exist but records are "
+        "broken or unverified. Call or verify before committing capital."
     )
     return dict(intervention="Verify-first data / records campaign",
                 p_addresses_need=float(np.clip(p, 0, 0.95)), need_gap=gap,
@@ -310,21 +311,20 @@ def _cand_telehealth(row, need):
     weak_evidence = review >= 0.7 or str(row.get("district_uncertainty_level", "")).lower() == "higher"
     sig = [
         f"trustworthy_supply_rate={trust*100:.0f}%",
-        "broadband_coverage=NOT IN DATASET (cannot confirm telehealth viability)",
-        "elderly_share=NOT IN DATASET (only population_below_age_15_years_pct exists)",
+        "broadband_coverage=not captured (cannot confirm telehealth viability)",
+        "elderly_share=not captured (only population_below_age_15_years_pct exists)",
     ]
     rationale = (
-        "Telehealth-first is a LOW-confidence default: the dataset has no broadband or "
-        "elderly-share columns, so the doc's penalty for low-broadband/elderly areas "
-        "cannot be evaluated. Prefer mobile care or CHW outreach unless connectivity is "
-        "separately confirmed."
+        "Telehealth-first is low-confidence: broadband and elderly-share columns are "
+        "absent, so low-connectivity/elderly-area penalties cannot be evaluated. "
+        "Prefer mobile care or CHW outreach unless connectivity is confirmed."
     )
     not_rec = bool(weak_evidence)
     reason = ""
     if not_rec:
         reason = (
             "Not recommended: viability signals (broadband, elderly share) are absent "
-            "from the dataset and local evidence is weak — do not lead with telehealth."
+            "and local evidence is weak; do not lead with telehealth."
         )
     return dict(intervention="Telehealth-first program",
                 p_addresses_need=float(np.clip(p, 0, 0.7)), need_gap=gap,
@@ -393,8 +393,8 @@ def _score_district(row: pd.Series) -> pd.DataFrame:
     if out.empty:
         return out
     # Telehealth-first is never the headline recommendation (doc posture: it cannot
-    # be confidently recommended without broadband/elderly signals, which the dataset
-    # lacks). It is demoted alongside any flagged not-recommended option so it can
+    # be confidently recommended without broadband/elderly signals, which the cleaned
+    # tables lack). It is demoted alongside any flagged not-recommended option so it can
     # never rank #1, while still appearing in the transparent table.
     out["_demote"] = (
         out["not_recommended_flag"]
@@ -557,7 +557,7 @@ def render_interventions(
             "What should be deployed first, and how sure are we?",
             "Each district is scored with a transparent expected-value rule: "
             "EV = P(addresses need) x benefit − P(wrong) x harm − operating cost. "
-            "Confidence reflects data uncertainty, never measured accuracy.",
+            "Confidence reflects uncertainty, not measured accuracy.",
             tone="info",
         )
         ui.workflow_rail([
@@ -572,7 +572,7 @@ def render_interventions(
             st.markdown(
                 "Each district is scored with a transparent expected-value rule: "
                 "**EV = P(addresses need) × benefit − P(wrong) × harm − operating cost.** "
-                "Confidence reflects data uncertainty, never measured accuracy."
+                "Confidence reflects uncertainty, not measured accuracy."
             )
             ui.workflow_rail([
                 ("1. Rank deserts", "Highest care-gap districts first"),
@@ -731,5 +731,5 @@ def render_interventions(
 
         st.caption(
             "Estimates are heuristic, not measured accuracy. Telehealth is a low-confidence "
-            "default because broadband and elderly-share signals are not in this dataset."
+            "default because broadband and elderly-share signals are absent."
         )
